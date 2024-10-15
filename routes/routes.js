@@ -4,6 +4,7 @@ import db from "../db/connections.js";
 
 const router = express.Router();
 const key = process.env.NETS_KEY;
+console.log(key);
 
 router.post("/v1/payments", async (req, res) => {
     console.log(req.body)
