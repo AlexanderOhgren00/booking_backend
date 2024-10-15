@@ -27,10 +27,27 @@ router.post("/v1/payments", async (req, res) => {
   
 router.post("/eventCreated", async (req, res) => {
   try {
-    console.log(req.body);
+    const event = req.body;
+
+    // Log the event for debugging purposes
+    console.log("Webhook event received:", event);
+
+    // Process the event (you can add your custom logic here)
+    // For example, you might want to handle different event types differently
+    switch (event.eventname) {
+      case "payment.created":
+        // Handle payment created event
+        console.log("Payment created event:", event);
+        break;
+      // Add more cases as needed for different event types
+      default:
+        console.log("Unhandled event type:", event.eventname);
+    }
+
+    // Respond to the webhook request
     res.status(200).send("Event received");
   } catch (error) {
-    console.error(error);
+    console.error("Error processing webhook event:", error);
     res.status(500).json({ error: error.message });
   }
 });
