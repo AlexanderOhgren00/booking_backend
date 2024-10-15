@@ -1,11 +1,8 @@
 import express from "express";
 import { ObjectId } from "mongodb";
 import db from "../db/connections.js";
-import dotenv from "dotenv";
 
 const router = express.Router();
-
-dotenv.config({path: "../backend/config/config.env"});
 const key = process.env.NETS_KEY;
 
 router.post("/v1/payments", async (req, res) => {
