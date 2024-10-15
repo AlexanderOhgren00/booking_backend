@@ -4,7 +4,11 @@
   "type": "module",
   "main": "checkout.js",
   "scripts": {
-    "start": "node checkout.js"
+    "client-install": "npm install --prefix client",
+    "start": "node checkout.js",
+    "server": "nodemon checkout.js",
+    "client": "cd ../ && npm start --prefix client",
+    "dev": "concurrently \"npm run server\" \"npm run client\""
   },
   "keywords": [],
   "author": "",
