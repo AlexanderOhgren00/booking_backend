@@ -26,15 +26,15 @@ async function run() {
   
     // Define the time slots with additional info
     const timeSlots = [
-      { "time": "9:30", "available": true, "cost": 850, "bookedBy": null },
-      { "time": "11:00", "available": true, "cost": 850, "bookedBy": null },
-      { "time": "12:30", "available": true, "cost": 850, "bookedBy": null },
-      { "time": "14:00", "available": true, "cost": 850, "bookedBy": null },
-      { "time": "15:30", "available": true, "cost": 850, "bookedBy": null },
-      { "time": "17:00", "available": true, "cost": 850, "bookedBy": null },
-      { "time": "18:30", "available": true, "cost": 850, "bookedBy": null },
-      { "time": "20:00", "available": true, "cost": 850, "bookedBy": null },
-      { "time": "21:30", "available": true, "cost": 850, "bookedBy": null }
+      { "time": "9:30", "available": true, "cost": 850, "bookedBy": null, "number": null, "email": null },
+      { "time": "11:00", "available": true, "cost": 850, "bookedBy": null, "number": null, "email": null },
+      { "time": "12:30", "available": true, "cost": 850, "bookedBy": null, "number": null, "email": null },
+      { "time": "14:00", "available": true, "cost": 850, "bookedBy": null, "number": null, "email": null },
+      { "time": "15:30", "available": true, "cost": 850, "bookedBy": null, "number": null, "email": null },
+      { "time": "17:00", "available": true, "cost": 850, "bookedBy": null, "number": null, "email": null },
+      { "time": "18:30", "available": true, "cost": 850, "bookedBy": null, "number": null, "email": null },
+      { "time": "20:00", "available": true, "cost": 850, "bookedBy": null, "number": null, "email": null },
+      { "time": "21:30", "available": true, "cost": 850, "bookedBy": null, "number": null, "email": null }
     ];
   
     // Define the categories
@@ -63,6 +63,6 @@ async function run() {
   
 let db = client.db("Mintescaperoom");
 
-//run().catch(console.dir);
+run().catch(console.dir);
   
 export default db;

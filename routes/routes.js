@@ -9,22 +9,22 @@ router.post("/v1/payments", async (req, res) => {
   try {
     const product = req.body;
     const response = await fetch("https://test.api.dibspayment.eu/v1/payments", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": key,
-    },
-    body: JSON.stringify(product)
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": key,
+      },
+      body: JSON.stringify(product)
     });
-  
+
     const data = await response.json();
     res.json(data);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
   }
-  });
-  
+});
+
 router.post("/eventCreated", async (req, res) => {
   try {
     const event = req.body;
@@ -54,37 +54,42 @@ router.post("/eventCreated", async (req, res) => {
 
 router.get("/v1/payments/:paymentId", async (req, res) => {
   try {
-  const paymentId = req.params.paymentId;
-  const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}`, {
-    method: "GET",
-    headers: {
-    "Content-Type": "application/json",
-    "Authorization": key,
-    },
-  });
+    const paymentId = req.params.paymentId;
+    const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": key,
+      },
+    });
 
-  const data = await response.json();
-  res.json(data);
+    const data = await response.json();
+    res.json(data);
   } catch (error) {
-  console.error(error);
-  res.status(500).json({ error: error.message });
+    console.error(error);
+    res.status(500).json({ error: error.message });
   }
 });
 
 router.get("/months", async (req, res) => {
   let collections = db.collection("months")
   let result = await collections.find({}).toArray();
-  res.json(result); 
+  res.json(result);
 });
 
 router.patch("/checkout", async (req, res) => {
-  const { month, day, category, time, available, bookedBy } = req.body;
-  
+  const { month, day, category, time, available, bookedBy, number, email } = req.body;
+
   try {
     let collections = db.collection("months");
     let result = await collections.updateOne(
-      { "month": month, "days.day": day, "days.categories.name": category, "days.categories.times.time": time},
-      { $set: {"days.$[day].categories.$[category].times.$[time].available": available, "days.$[day].categories.$[category].times.$[time].bookedBy": bookedBy}},
+      { "month": month, "days.day": day, "days.categories.name": category, "days.categories.times.time": time },
+      { $set: { "days.$[day].categories.$[category].times.$[time].available": available, 
+        "days.$[day].categories.$[category].times.$[time].bookedBy": bookedBy, 
+        "days.$[day].categories.$[category].times.$[time].number" : number,
+        "days.$[day].categories.$[category].times.$[time].email" : email,
+        } 
+      },
       { arrayFilters: [{ "day.day": day }, { "category.name": category }, { "time.time": time }] }
     );
     res.json(result);
