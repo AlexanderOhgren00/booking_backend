@@ -78,17 +78,21 @@ router.get("/months", async (req, res) => {
 });
 
 router.patch("/checkout", async (req, res) => {
-  const { month, day, category, time, available, bookedBy, number, email } = req.body;
+  const { month, day, category, time, available, bookedBy, number, email, info, paymentId } = req.body;
 
   try {
     let collections = db.collection("months");
     let result = await collections.updateOne(
       { "month": month, "days.day": day, "days.categories.name": category, "days.categories.times.time": time },
-      { $set: { "days.$[day].categories.$[category].times.$[time].available": available, 
-        "days.$[day].categories.$[category].times.$[time].bookedBy": bookedBy, 
-        "days.$[day].categories.$[category].times.$[time].number" : number,
-        "days.$[day].categories.$[category].times.$[time].email" : email,
-        } 
+      {
+        $set: {
+          "days.$[day].categories.$[category].times.$[time].available": available,
+          "days.$[day].categories.$[category].times.$[time].bookedBy": bookedBy,
+          "days.$[day].categories.$[category].times.$[time].number": number,
+          "days.$[day].categories.$[category].times.$[time].email": email,
+          "days.$[day].categories.$[category].times.$[time].info": info,
+          "days.$[day].categories.$[category].times.$[time].paymentId": paymentId
+        }
       },
       { arrayFilters: [{ "day.day": day }, { "category.name": category }, { "time.time": time }] }
     );
