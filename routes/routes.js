@@ -78,7 +78,7 @@ router.get("/months", async (req, res) => {
 });
 
 router.patch("/checkout", async (req, res) => {
-  const { month, day, category, time, available, bookedBy, number, email, info, paymentId } = req.body;
+  const { month, day, category, time, players, available, bookedBy, number, email, info, paymentId } = req.body;
 
   try {
     let collections = db.collection("months");
@@ -87,6 +87,7 @@ router.patch("/checkout", async (req, res) => {
       {
         $set: {
           "days.$[day].categories.$[category].times.$[time].available": available,
+          "days.$[day].categories.$[category].times.$[time].players": players,
           "days.$[day].categories.$[category].times.$[time].bookedBy": bookedBy,
           "days.$[day].categories.$[category].times.$[time].number": number,
           "days.$[day].categories.$[category].times.$[time].email": email,
