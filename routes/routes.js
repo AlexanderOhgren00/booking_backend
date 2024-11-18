@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import db from "../db/connections.js";
 import rateLimit from 'express-rate-limit';
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
 const router = express.Router();
 const key = process.env.NETS_KEY;
