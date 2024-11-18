@@ -128,6 +128,10 @@ function authenticateToken(req, res, next) {
   });
 }
 
+router.get("/checkAuth", authenticateToken, (req, res) => {
+  res.status(200).json({ authenticated: true, user: req.user });
+});
+
 router.post("/register", async (req, res) => {
   const {username, password} = req.body;
 
