@@ -9,8 +9,13 @@ const sslRedirect = herokuSSLRedirect.default;
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+const corsOptions = {
+  origin: "http://localhost:5137",
+  credentials: true,
+}
+
 app.use(sslRedirect());
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(helmet());
 app.use(express.json());
 app.use(cookieParser());
