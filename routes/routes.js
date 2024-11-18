@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 
 const router = express.Router();
 const key = process.env.NETS_KEY;
+const jwt_key = process.env.JWT_SECRET;
 
 router.post("/v1/payments", async (req, res) => {
   try {
