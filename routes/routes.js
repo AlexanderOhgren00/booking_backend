@@ -137,6 +137,10 @@ function authenticateToken(req, res, next) {
 }
 
 router.get("/checkAuth", authenticateToken, (req, res) => {
+  if (!req.user) {
+    return res.status(401).json({ authenticated: false });
+  }
+  
   res.status(200).json({ authenticated: true, user: req.user });
 });
 
