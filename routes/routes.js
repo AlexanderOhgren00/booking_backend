@@ -105,7 +105,7 @@ router.post("/login", loginLimiter, async (req, res) => {
     res.cookie("token", token, {
       httpOnly: true,
       secure: true,
-      sameSite: "Lax",
+      sameSite: "None",
     })
 
     res.status(200).json({ message: "Login successful", token });
