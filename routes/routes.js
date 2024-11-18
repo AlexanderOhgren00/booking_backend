@@ -84,13 +84,13 @@ const loginLimiter = rateLimit({
 router.post("/login", loginLimiter, async (req, res) => {
   const collections = db.collection("users");
   const { username, password } = req.body;
-  
+
   if (!username || !password) {
     return res.status(400).json({ error: "Username and password are required" });
   }
 
   try {
-    const user = await collections.findOne({ username})
+    const user = await collections.findOne({ username })
     if (!user) {
       return res.status(401).json({ error: "Invalid username or password" });
     }
@@ -109,7 +109,7 @@ router.post("/login", loginLimiter, async (req, res) => {
     })
 
     res.status(200).json({ message: "Login successful", token });
-  
+
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
@@ -118,34 +118,34 @@ router.post("/login", loginLimiter, async (req, res) => {
 });
 
 function authenticateToken(req, res, next) {
-    // Get the token from cookies
-    const token = req.cookies.token;
+  // Get the token from cookies
+  const token = req.cookies.token;
+  console.log("Token from cookies:", token); // Add this line for debugging
+  if (!token) {
+    return res.status(401).json({ message: 'Access Denied. No token provided.' });
+  }
 
-    if (!token) {
-      return res.status(401).json({ message: 'Access Denied. No token provided.' });
-    }
-  
-    try {
-      // Verify the token
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = decoded; // Add decoded user info to the request
-      next(); // Proceed to the next middleware or route
-    } catch (err) {
-      console.error('Token verification failed:', err);
-      res.status(403).json({ message: 'Invalid or expired token.' });
-    }
+  try {
+    // Verify the token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded; // Add decoded user info to the request
+    next(); // Proceed to the next middleware or route
+  } catch (err) {
+    console.error('Token verification failed:', err);
+    res.status(403).json({ message: 'Invalid or expired token.' });
+  }
 }
 
 router.get("/checkAuth", authenticateToken, (req, res) => {
   if (!req.user) {
     return res.status(401).json({ authenticated: false });
   }
-  
+
   res.status(200).json({ authenticated: true, user: req.user });
 });
 
 router.post("/register", async (req, res) => {
-  const {username, password} = req.body;
+  const { username, password } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ error: "Username and password are required" });
