@@ -1,6 +1,8 @@
 import express from "express";
 import { ObjectId } from "mongodb";
 import db from "../db/connections.js";
+import rateLimit from 'express-rate-limit';
+import bcrypt from "bcryptjs";
 
 const router = express.Router();
 const key = process.env.NETS_KEY;
@@ -65,6 +67,84 @@ router.get("/v1/payments/:paymentId", async (req, res) => {
 
     const data = await response.json();
     res.json(data);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Too many login attempts, please try again later",
+});
+
+router.post("/login", loginLimiter, async (req, res) => {
+  const collections = db.collection("users");
+  const { username, password } = req.body;
+  
+  if (!username || !password) {
+    return res.status(400).json({ error: "Username and password are required" });
+  }
+
+  try {
+    const user = await collections.findOne({ username})
+    if (!user) {
+      return res.status(401).json({ error: "Invalid username or password" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.passwordHash);
+    if (!isMatch) {
+      return res.status(401).json({ error: "Invalid username or password" });
+    }
+
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: "1h" });
+
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Strict",
+    })
+
+    res.status(200).json({ message: "Login successful" });
+  
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+
+});
+
+function authenticateToken(req, res, next) {
+  const token = req.cookies.token;
+  if (!token) return res.status(401).json({ error: "Access denied" });
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ error: "Invalid token" });
+    req.user = user;
+    next();
+  });
+}
+
+router.post("/register", async (req, res) => {
+  const {username, password} = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ error: "Username and password are required" });
+  }
+
+  try {
+    const userExist = await db.collection("users").findOne({ username });
+    if (userExist) {
+      return res.status(400).json({ error: "Username already exists" });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    await db.collection("users").insertOne({ username, passwordHash });
+
+    res.status(201).json({ message: "User created" });
+
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
