@@ -118,14 +118,22 @@ router.post("/login", loginLimiter, async (req, res) => {
 });
 
 function authenticateToken(req, res, next) {
-  const token = req.cookies.token;
-  if (!token) return res.status(401).json({ error: "Access denied" });
+    // Get the token from cookies
+    const token = req.cookies.token;
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: "Invalid token" });
-    req.user = user;
-    next();
-  });
+    if (!token) {
+      return res.status(401).json({ message: 'Access Denied. No token provided.' });
+    }
+  
+    try {
+      // Verify the token
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = decoded; // Add decoded user info to the request
+      next(); // Proceed to the next middleware or route
+    } catch (err) {
+      console.error('Token verification failed:', err);
+      res.status(403).json({ message: 'Invalid or expired token.' });
+    }
 }
 
 router.get("/checkAuth", authenticateToken, (req, res) => {
