@@ -108,7 +108,7 @@ router.post("/login", loginLimiter, async (req, res) => {
       sameSite: "Strict",
     })
 
-    res.status(200).json({ message: "Login successful" });
+    res.status(200).json({ message: "Login successful", token });
   
   } catch (error) {
     console.error(error);
