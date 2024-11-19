@@ -120,9 +120,9 @@ router.post("/login", loginLimiter, async (req, res) => {
 });
 
 function authenticateToken(req, res, next) {
-  // Get the token from cookies
-  const token = req.cookies.token;
-  console.log("Token from cookies:", token); // Add this line for debugging
+  // Get the token from the request body
+  const token = req.body.token;
+  console.log("Token from body:", token); // Add this line for debugging
   if (!token) {
     return res.status(401).json({ message: 'Access Denied. No token provided.' });
   }
