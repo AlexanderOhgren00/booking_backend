@@ -106,7 +106,7 @@ router.post("/login", loginLimiter, async (req, res) => {
       path: "/",
       maxAge: 3 * 60 * 60 * 1000,
       httpOnly: true,
-      sameSite: "Strict",
+      sameSite: "none",
       secure: true,
     })
 
