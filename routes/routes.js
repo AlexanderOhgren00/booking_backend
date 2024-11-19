@@ -103,9 +103,10 @@ router.post("/login", loginLimiter, async (req, res) => {
     const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: "1h" });
 
     res.cookie("token", token, {
+      maxAge: 3 * 60 * 60 * 1000,
       httpOnly: true,
       sameSite: "Lax",
-      //secure
+      secure: false
     })
 
     res.status(200).json({ message: "Login successful", token });
