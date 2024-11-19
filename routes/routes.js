@@ -104,6 +104,7 @@ router.post("/login", loginLimiter, async (req, res) => {
 
     res.cookie("token", token, {
       path: "/",
+      domain: "localhost",
       maxAge: 3 * 60 * 60 * 1000,
       httpOnly: true,
       sameSite: "none",
