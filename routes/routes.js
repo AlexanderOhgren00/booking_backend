@@ -138,7 +138,7 @@ function authenticateToken(req, res, next) {
   }
 }
 
-router.get("/checkAuth", authenticateToken, (req, res) => {
+router.post("/checkAuth", authenticateToken, (req, res) => {
   if (!req.user) {
     return res.status(401).json({ authenticated: false });
   }
