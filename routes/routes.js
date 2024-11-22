@@ -101,7 +101,7 @@ router.post("/login", loginLimiter, async (req, res) => {
     }
 
     const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: "1h" });
-    const privilage = user.topAdmin;
+    const privilage = user.privilage;
 
     res.cookie("token", token, {
       path: "/",
