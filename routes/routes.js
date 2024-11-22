@@ -101,6 +101,7 @@ router.post("/login", loginLimiter, async (req, res) => {
     }
 
     const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: "1h" });
+    const privilage = user.topAdmin;
 
     res.cookie("token", token, {
       path: "/",
@@ -110,7 +111,7 @@ router.post("/login", loginLimiter, async (req, res) => {
       secure: true,
     })
 
-    res.status(200).json({ message: "Login successful", token });
+    res.status(200).json({ message: "Login successful", token, privilage });
 
   } catch (error) {
     console.error(error);
