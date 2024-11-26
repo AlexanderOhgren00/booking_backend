@@ -26,15 +26,15 @@ async function run() {
 
     // Define the time slots with additional info
     const timeSlots = [
-      { "time": "9:30", "available": true, "cost": 850, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
-      { "time": "11:00", "available": true, "cost": 850, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
-      { "time": "12:30", "available": true, "cost": 850, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
-      { "time": "14:00", "available": true, "cost": 850, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
-      { "time": "15:30", "available": true, "cost": 850, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
-      { "time": "17:00", "available": true, "cost": 850, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
-      { "time": "18:30", "available": true, "cost": 850, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
-      { "time": "20:00", "available": true, "cost": 850, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
-      { "time": "21:30", "available": true, "cost": 850, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null }
+      { "time": "9:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
+      { "time": "11:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
+      { "time": "12:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
+      { "time": "14:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
+      { "time": "15:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
+      { "time": "17:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
+      { "time": "18:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
+      { "time": "20:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null },
+      { "time": "21:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null }
     ];
 
     // Define the categories
