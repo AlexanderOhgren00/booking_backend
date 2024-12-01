@@ -172,6 +172,24 @@ router.post("/register", async (req, res) => {
   }
 });
 
+router.post("/checkout", async (req, res) => {
+  const { discount } = req.body;
+
+  try {
+    const collections = db.collection("discounts");
+    
+    const discountDoc = await collections.findOne({ key: discount });
+    if (!discountDoc) {
+      return res.status(400).json({ error: "Invalid discount code" });
+    }
+    res.status(200).json({ message: "Discount applied", discount: discountDoc });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get("/months", async (req, res) => {
   let collections = db.collection("months")
   let result = await collections.find({}).toArray();
