@@ -172,12 +172,12 @@ router.post("/register", async (req, res) => {
   }
 });
 
-router.post("/checkout", async (req, res) => {
+router.post("/discounts", async (req, res) => {
   const { discount } = req.body;
 
   try {
     const collections = db.collection("discounts");
-    
+
     const discountDoc = await collections.findOne({ key: discount });
     if (!discountDoc) {
       return res.status(400).json({ error: "Invalid discount code" });
