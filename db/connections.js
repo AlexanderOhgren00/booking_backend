@@ -42,7 +42,7 @@ async function run() {
 
     // Create an example document for October with 31 days
     const octoberSchedule = {
-      month: "November",
+      month: "December",
       days: Array.from({ length: 31 }, (_, i) => ({
         day: i + 1,
         categories: categories.map(category => ({
@@ -63,6 +63,6 @@ async function run() {
 
 let db = client.db("Mintescaperoom");
 
-//run().catch(console.dir);
+run().catch(console.dir);
 
 export default db;
