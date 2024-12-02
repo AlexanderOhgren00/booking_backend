@@ -172,6 +172,16 @@ router.post("/register", async (req, res) => {
   }
 });
 
+router.get("/users" , async (req, res) => {
+  try {
+    const users = await db.collection("users").find({}).toArray();
+    res.json(users);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post("/discounts", async (req, res) => {
   const { discount } = req.body;
 
