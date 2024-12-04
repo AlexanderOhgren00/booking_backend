@@ -148,7 +148,7 @@ router.post("/checkAuth", authenticateToken, (req, res) => {
 });
 
 router.post("/register", async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, privilage } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ error: "Username and password are required" });
@@ -162,7 +162,7 @@ router.post("/register", async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    await db.collection("users").insertOne({ username, passwordHash });
+    await db.collection("users").insertOne({ username, passwordHash, privilage });
 
     res.status(201).json({ message: "User created" });
 
