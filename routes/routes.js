@@ -187,7 +187,7 @@ router.patch("/users", async (req, res) => {
 
   try {
     const collections = db.collection("users");
-    const user = await collections.findOne({ _id: id });
+    const user = await collections.findOne({ _id: ObjectId(id) });
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
@@ -201,7 +201,7 @@ router.patch("/users", async (req, res) => {
     }
 
     const result = await collections.updateOne(
-      { _id: id },
+      { _id: ObjectId(id) },
       {
         $set: {
           username: username,
