@@ -189,7 +189,7 @@ router.patch("/users", async (req, res) => {
     const collections = db.collection("users");
 
     const result = await collections.updateOne(
-      { _id: ObjectId(id) },
+      { _id: id },
       {
         $set: {
           "username": username,
