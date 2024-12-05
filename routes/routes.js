@@ -184,7 +184,7 @@ router.get("/users" , async (req, res) => {
 
 router.patch("/users", async (req, res) => {
   const { id, username, password, privilage } = req.body;
-  const userId = ObjectId(id);
+  const userId = ObjectId.createFromHexString(id);
   console.log(userId, "USER ID");
 
   try {
