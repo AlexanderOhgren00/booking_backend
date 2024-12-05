@@ -185,6 +185,7 @@ router.get("/users" , async (req, res) => {
 router.patch("/users", async (req, res) => {
   const { id, username, password, privilage } = req.body;
   const userId = ObjectId(id);
+  console.log(userId, "USER ID");
 
   try {
     const collections = db.collection("users");
