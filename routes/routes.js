@@ -182,6 +182,29 @@ router.get("/users" , async (req, res) => {
   }
 });
 
+router.patch("/users", async (req, res) => {
+  const { id, username, password, privilage } = req.body;
+
+  try {
+    const collections = db.collection("users");
+
+    const result = await collections.updateOne(
+      { _id: ObjectId(id) },
+      {
+        $set: {
+          "username": username,
+          "passwordHash": password,
+          "privilage": privilage
+        }
+      }
+    )
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post("/discounts", async (req, res) => {
   const { discount } = req.body;
 
