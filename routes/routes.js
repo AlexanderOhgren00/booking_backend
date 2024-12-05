@@ -185,6 +185,8 @@ router.get("/users" , async (req, res) => {
 router.patch("/users", async (req, res) => {
   const { id, username, password, privilage } = req.body;
 
+  const passwordHash = await bcrypt.hash(password, 10);
+
   try {
     const collections = db.collection("users");
 
@@ -193,7 +195,7 @@ router.patch("/users", async (req, res) => {
       {
         $set: {
           "username": username,
-          "passwordHash": password,
+          "passwordHash": passwordHash,
           "privilage": privilage
         }
       }
