@@ -184,12 +184,10 @@ router.get("/users" , async (req, res) => {
 
 router.patch("/users", async (req, res) => {
   const { id, username, password, privilage } = req.body;
-  const userId = ObjectId.createFromBase64(id);
-  console.log(userId, "USER ID");
 
   try {
     const collections = db.collection("users");
-    const user = await collections.findOne({ _id: userId });
+    const user = await collections.findOne({ _id: id });
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
@@ -203,7 +201,7 @@ router.patch("/users", async (req, res) => {
     }
 
     const result = await collections.updateOne(
-      { _id: userId },
+      { _id: id },
       {
         $set: {
           username: username,
