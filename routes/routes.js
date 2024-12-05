@@ -185,21 +185,32 @@ router.get("/users" , async (req, res) => {
 router.patch("/users", async (req, res) => {
   const { id, username, password, privilage } = req.body;
 
-  const passwordHash = await bcrypt.hash(password, 10);
-
   try {
     const collections = db.collection("users");
+    const user = await collections.findOne({ _id: id });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    let passwordHash = user.passwordHash;
+
+    const isMatch = await bcrypt.compare(password, user.passwordHash);
+    if (!isMatch) {
+      passwordHash = await bcrypt.hash(password, 10);
+    }
 
     const result = await collections.updateOne(
       { _id: id },
       {
         $set: {
-          "username": username,
-          "passwordHash": passwordHash,
-          "privilage": privilage
+          username: username,
+          passwordHash: passwordHash,
+          privilage: privilage
         }
       }
-    )
+    );
+
     res.json(result);
   } catch (error) {
     console.error(error);
