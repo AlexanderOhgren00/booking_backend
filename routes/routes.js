@@ -119,6 +119,27 @@ router.post("/v1/payments/:paymentId/charges", async (req, res) => {
   }
 });
 
+router.put("/v1/payments/:paymentId/terminate", async (req, res) => {
+  try {
+    const paymentId = req.params.paymentId;
+    const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": key,
+      },
+      body: JSON.stringify(req.body)
+    });
+
+    const data = await response.json();
+    res.json(data);
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
