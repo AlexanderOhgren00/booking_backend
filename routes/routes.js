@@ -97,6 +97,28 @@ router.post("/v1/payments/:paymentId/refunds", async (req, res) => {
   }
 })
 
+router.post("/v1/payments/:paymentId/charges", async (req, res) => {
+  try {
+    const paymentId = req.params.paymentId;
+    console.log("Payment ID:", paymentId);
+    const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": key,
+      },
+      body: JSON.stringify(req.body)
+    });
+
+    const data = await response.json();
+    res.json(data);
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
