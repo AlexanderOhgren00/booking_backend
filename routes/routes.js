@@ -78,6 +78,7 @@ router.get("/v1/payments/:paymentId", async (req, res) => {
 router.post("/v1/payments/:paymentId/refunds", async (req, res) => {
   try {
     const paymentId = req.params.paymentId;
+    console.log("Payment ID:", paymentId);
     const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/refunds`, {
       method: "POST",
       headers: {
@@ -89,7 +90,7 @@ router.post("/v1/payments/:paymentId/refunds", async (req, res) => {
 
     const data = await response.json();
     res.json(data);
-    
+
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
@@ -193,7 +194,7 @@ router.post("/register", async (req, res) => {
   }
 });
 
-router.get("/users" , async (req, res) => {
+router.get("/users", async (req, res) => {
   try {
     const users = await db.collection("users").find({}).toArray();
     res.json(users);
@@ -209,7 +210,7 @@ router.patch("/users", async (req, res) => {
   try {
     const user_id = ObjectId.createFromHexString(id);
     const collections = db.collection("users");
-    const user = await collections.findOne({ _id: user_id});
+    const user = await collections.findOne({ _id: user_id });
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
