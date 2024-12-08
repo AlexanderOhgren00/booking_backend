@@ -9,6 +9,33 @@ const router = express.Router();
 const key = process.env.NETS_KEY;
 const jwt_key = process.env.JWT_SECRET;
 
+const paymentStates = {};
+
+async function cleanUpPaymentStates() {
+  const currentDate = new Date();
+
+  for (const paymentId in paymentStates) {
+    const paymentDate = new Date(paymentStates[paymentId].date);
+    const timeDifference = (currentDate - paymentDate) / 1000 / 60;
+
+    if (timeDifference > 5) {
+      const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": key,
+        },
+        body: JSON.stringify(req.body)
+      });
+  
+      const data = await response.json();
+      res.json(data);
+    }
+  }
+}
+
+setInterval(cleanUpPaymentStates, 60 * 1000);
+
 router.post("/v1/payments", async (req, res) => {
   try {
     const product = req.body;
@@ -23,6 +50,32 @@ router.post("/v1/payments", async (req, res) => {
 
     const data = await response.json();
     res.json(data);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
+  try {
+    const paymentId = req.params.paymentId;
+    const currentDate = new Date();
+
+    paymentStates[paymentId] = { date: currentDate }
+
+    res.status(200).json({ message: "Payment initialized", paymentId, date: currentDate});
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/v1/payments/:paymentId/session-complete", async (req, res) => {
+  try {
+    const paymentId = req.params.paymentId;
+    delete paymentStates[paymentId];
+    res.status(200).json({ message: "Payment session completed and removed from state", paymentId });
+
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
