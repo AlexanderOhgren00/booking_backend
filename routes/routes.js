@@ -25,9 +25,7 @@ async function cleanUpPaymentStates() {
           "Content-Type": "application/json",
           "Authorization": key,
         },
-        body: JSON.stringify(req.body)
       });
-  
       const data = await response.json();
       res.json(data);
     }
