@@ -14,6 +14,7 @@ const paymentStates = {};
 async function cleanUpPaymentStates() {
   const currentDate = new Date();
   console.log("Cleaning up payment states...", paymentStates);
+  const collections = db.collection("months");
 
   for (const paymentId in paymentStates) {
     const paymentDate = new Date(paymentStates[paymentId].date);
