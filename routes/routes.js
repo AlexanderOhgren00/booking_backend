@@ -27,7 +27,7 @@ async function cleanUpPaymentStates() {
         },
       });
       const data = { message: "Payment terminated", paymentId };
-      res.json(data);
+      console.log(data);
     }
   }
 }
