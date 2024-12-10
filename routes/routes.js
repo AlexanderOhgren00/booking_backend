@@ -179,12 +179,11 @@ router.put("/v1/payments/:paymentId/terminate", async (req, res) => {
         "Content-Type": "application/json",
         "Authorization": key,
       },
-      body: JSON.stringify(req.body)
     });
 
     delete paymentStates[paymentId];
 
-    const data = await response.json();
+    const data = { message: "Payment terminated", paymentId };
     res.json(data);
 
   } catch (error) {
