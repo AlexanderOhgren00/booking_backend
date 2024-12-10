@@ -182,6 +182,8 @@ router.put("/v1/payments/:paymentId/terminate", async (req, res) => {
       body: JSON.stringify(req.body)
     });
 
+    delete paymentStates[paymentId];
+
     const data = await response.json();
     res.json(data);
 
