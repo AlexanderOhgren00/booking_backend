@@ -58,8 +58,10 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
   try {
     const paymentId = req.params.paymentId;
     const currentDate = new Date();
+    const body = req.body
 
-    paymentStates[paymentId] = { date: currentDate }
+    paymentStates[paymentId] = { date: currentDate, data: body.combinedData };
+    console.log("Payment states:", paymentStates);
 
     res.status(200).json({ message: "Payment initialized", paymentId, date: currentDate});
   } catch (error) {
