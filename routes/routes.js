@@ -13,12 +13,17 @@ const paymentStates = {};
 
 async function cleanUpPaymentStates() {
   const currentDate = new Date();
+  console.log("Cleaning up payment states...", paymentStates);
 
   for (const paymentId in paymentStates) {
     const paymentDate = new Date(paymentStates[paymentId].date);
     const timeDifference = (currentDate - paymentDate) / 1000 / 60;
 
     if (timeDifference > 5) {
+      for (const item of paymentStates[paymentId].data) {
+        // Process each item in the data array
+        console.log(item);
+      }
       const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
         method: "PUT",
         headers: {
