@@ -26,7 +26,7 @@ async function cleanUpPaymentStates() {
           "Authorization": key,
         },
       });
-      const data = await response.json();
+      const data = { message: "Payment terminated", paymentId };
       res.json(data);
     }
   }
