@@ -21,8 +21,24 @@ async function cleanUpPaymentStates() {
 
     if (timeDifference > 5) {
       for (const item of paymentStates[paymentId].data) {
-        // Process each item in the data array
-        console.log(item);
+        await collections.updateOne(
+          { "month": item.month, "days.day": item.day, "days.categories.name": item.category, "days.categories.times.time": item.time },
+          {
+            $set: {
+              "days.$[day].categories.$[category].times.$[time].available": true,
+              "days.$[day].categories.$[category].times.$[time].players": 0,
+              "days.$[day].categories.$[category].times.$[time].payed": null,
+              "days.$[day].categories.$[category].times.$[time].cost": 0,
+              "days.$[day].categories.$[category].times.$[time].bookedBy": null,
+              "days.$[day].categories.$[category].times.$[time].number": null,
+              "days.$[day].categories.$[category].times.$[time].email": null,
+              "days.$[day].categories.$[category].times.$[time].info": null,
+              "days.$[day].categories.$[category].times.$[time].paymentId": null
+            }
+          },
+          { arrayFilters: [{ "day.day": item.day }, { "category.name": item.category }, { "time.time": item.time }] }
+        );
+        console.log("Payment state cleaned up:", item);
       }
       const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
         method: "PUT",
