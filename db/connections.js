@@ -22,7 +22,7 @@ try {
 
 async function run() {
   try {
-    const collection = db.collection('months');
+    const collection = db.collection('years');
 
     // Define the time slots with additional info
     const timeSlots = [
@@ -40,20 +40,36 @@ async function run() {
     // Define the categories
     const categories = ["SCHOOL OF MAGIC", "HAUNTED HOTEL", "ARK RAIDER", "SUBMARINE", "JURRASIC EXPERIMENT"];
 
-    // Create an example document for October with 31 days
-    const octoberSchedule = {
-      month: "December",
-      days: Array.from({ length: 31 }, (_, i) => ({
-        day: i + 1,
-        categories: categories.map(category => ({
-          name: category,
-          times: timeSlots
-        }))
-      }))
+    // Create an example document for a year with months and days
+    const yearSchedule = {
+      year: 2024,
+      months: [
+        {
+          month: "November",
+          days: Array.from({ length: 30 }, (_, i) => ({
+            day: i + 1,
+            categories: categories.map(category => ({
+              name: category,
+              times: timeSlots
+            }))
+          }))
+        },
+        {
+          month: "December",
+          days: Array.from({ length: 31 }, (_, i) => ({
+            day: i + 1,
+            categories: categories.map(category => ({
+              name: category,
+              times: timeSlots
+            }))
+          }))
+        },
+        // Add more months as needed
+      ]
     };
 
     // Insert the document into the collection
-    const result = await collection.insertOne(octoberSchedule);
+    const result = await collection.insertOne(yearSchedule);
     console.log("Document inserted with _id: ", result.insertedId);
 
   } finally {
@@ -63,6 +79,6 @@ async function run() {
 
 let db = client.db("Mintescaperoom");
 
-//run().catch(console.dir);
+run().catch(console.dir);
 
 export default db;

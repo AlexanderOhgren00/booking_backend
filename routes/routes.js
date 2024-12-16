@@ -95,6 +95,9 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
 router.post("/v1/payments/:paymentId/session-complete", async (req, res) => {
   try {
     const paymentId = req.params.paymentId;
+    if (!paymentStates[paymentId]) {
+      return res.status(404).json({ error: "Payment session not found" });
+    }
     delete paymentStates[paymentId];
     res.status(200).json({ message: "Payment session completed and removed from state", paymentId });
 
