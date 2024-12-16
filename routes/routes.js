@@ -394,26 +394,26 @@ router.get("/years", async (req, res) => {
 });
 
 router.patch("/checkout", async (req, res) => {
-  const { month, day, category, time, cost, players, payed, available, bookedBy, number, email, info, paymentId } = req.body;
+  const { year, month, day, category, time, cost, players, payed, available, bookedBy, number, email, info, paymentId } = req.body;
 
   try {
-    let collections = db.collection("months");
+    let collections = db.collection("years");
     let result = await collections.updateOne(
-      { "month": month, "days.day": day, "days.categories.name": category, "days.categories.times.time": time },
+      { "year": year, "months.month": month, "months.days.day": day, "months.days.categories.name": category, "months.days.categories.times.time": time },
       {
         $set: {
-          "days.$[day].categories.$[category].times.$[time].available": available,
-          "days.$[day].categories.$[category].times.$[time].players": players,
-          "days.$[day].categories.$[category].times.$[time].payed": payed,
-          "days.$[day].categories.$[category].times.$[time].cost": cost,
-          "days.$[day].categories.$[category].times.$[time].bookedBy": bookedBy,
-          "days.$[day].categories.$[category].times.$[time].number": number,
-          "days.$[day].categories.$[category].times.$[time].email": email,
-          "days.$[day].categories.$[category].times.$[time].info": info,
-          "days.$[day].categories.$[category].times.$[time].paymentId": paymentId
+          "months.$[month].days.$[day].categories.$[category].times.$[time].available": available,
+          "months.$[month].days.$[day].categories.$[category].times.$[time].players": players,
+          "months.$[month].days.$[day].categories.$[category].times.$[time].payed": payed,
+          "months.$[month].days.$[day].categories.$[category].times.$[time].cost": cost,
+          "months.$[month].days.$[day].categories.$[category].times.$[time].bookedBy": bookedBy,
+          "months.$[month].days.$[day].categories.$[category].times.$[time].number": number,
+          "months.$[month].days.$[day].categories.$[category].times.$[time].email": email,
+          "months.$[month].days.$[day].categories.$[category].times.$[time].info": info,
+          "months.$[month].days.$[day].categories.$[category].times.$[time].paymentId": paymentId
         }
       },
-      { arrayFilters: [{ "day.day": day }, { "category.name": category }, { "time.time": time }] }
+      { arrayFilters: [{ "month.month": month }, { "day.day": day }, { "category.name": category }, { "time.time": time }] }
     );
     res.json(result);
   } catch (error) {
