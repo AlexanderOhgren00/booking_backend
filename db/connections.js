@@ -45,6 +45,106 @@ async function run() {
       year: 2024,
       months: [
         {
+          month: "January",
+          days: Array.from({ length: 31 }, (_, i) => ({
+            day: i + 1,
+            categories: categories.map(category => ({
+              name: category,
+              times: timeSlots
+            }))
+          }))
+        },
+        {
+          month: "February",
+          days: Array.from({ length: 28 }, (_, i) => ({
+            day: i + 1,
+            categories: categories.map(category => ({
+              name: category,
+              times: timeSlots
+            }))
+          }))
+        },
+        {
+          month: "March",
+          days: Array.from({ length: 31 }, (_, i) => ({
+            day: i + 1,
+            categories: categories.map(category => ({
+              name: category,
+              times: timeSlots
+            }))
+          }))
+        },
+        {
+          month: "April",
+          days: Array.from({ length: 30 }, (_, i) => ({
+            day: i + 1,
+            categories: categories.map(category => ({
+              name: category,
+              times: timeSlots
+            }))
+          }))
+        },
+        {
+          month: "May",
+          days: Array.from({ length: 31 }, (_, i) => ({
+            day: i + 1,
+            categories: categories.map(category => ({
+              name: category,
+              times: timeSlots
+            }))
+          }))
+        },
+        {
+          month: "June",
+          days: Array.from({ length: 30 }, (_, i) => ({
+            day: i + 1,
+            categories: categories.map(category => ({
+              name: category,
+              times: timeSlots
+            }))
+          }))
+        },
+        {
+          month: "July",
+          days: Array.from({ length: 31 }, (_, i) => ({
+            day: i + 1,
+            categories: categories.map(category => ({
+              name: category,
+              times: timeSlots
+            }))
+          }))
+        },
+        {
+          month: "August",
+          days: Array.from({ length: 31 }, (_, i) => ({
+            day: i + 1,
+            categories: categories.map(category => ({
+              name: category,
+              times: timeSlots
+            }))
+          }))
+        },
+        {
+          month: "September",
+          days: Array.from({ length: 30 }, (_, i) => ({
+            day: i + 1,
+            categories: categories.map(category => ({
+              name: category,
+              times: timeSlots
+            }))
+          }))
+        },
+        {
+          month: "October",
+          days: Array.from({ length: 31 }, (_, i) => ({
+            day: i + 1,
+            categories: categories.map(category => ({
+              name: category,
+              times: timeSlots
+            }))
+          }))
+        },
+        {
           month: "November",
           days: Array.from({ length: 30 }, (_, i) => ({
             day: i + 1,
@@ -79,6 +179,6 @@ async function run() {
 
 let db = client.db("Mintescaperoom");
 
-//run().catch(console.dir);
+run().catch(console.dir);
 
 export default db;
