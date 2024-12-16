@@ -387,6 +387,12 @@ router.get("/months", async (req, res) => {
   res.json(result);
 });
 
+router.get("/years", async (req, res) => {
+  let collections = db.collection("years")
+  let result = await collections.find({}).toArray();
+  res.json(result);
+});
+
 router.patch("/checkout", async (req, res) => {
   const { month, day, category, time, cost, players, payed, available, bookedBy, number, email, info, paymentId } = req.body;
 
