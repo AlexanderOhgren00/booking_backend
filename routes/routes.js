@@ -14,7 +14,7 @@ const paymentStates = {};
 async function cleanUpPaymentStates() {
   const currentDate = new Date();
   console.log("Cleaning up payment states...", paymentStates);
-  const collections = db.collection("months");
+  const collections = db.collection("years");
 
   for (const paymentId in paymentStates) {
     const paymentDate = new Date(paymentStates[paymentId].date);
@@ -23,7 +23,7 @@ async function cleanUpPaymentStates() {
     if (timeDifference > 5) {
       for (const item of paymentStates[paymentId].data) {
         await collections.updateOne(
-          { "month": item.month, "days.day": item.day, "days.categories.name": item.category, "days.categories.times.time": item.time },
+          { "year": item.year, "month": item.month, "days.day": item.day, "days.categories.name": item.category, "days.categories.times.time": item.time },
           {
             $set: {
               "days.$[day].categories.$[category].times.$[time].available": true,
@@ -37,7 +37,7 @@ async function cleanUpPaymentStates() {
               "days.$[day].categories.$[category].times.$[time].paymentId": null
             }
           },
-          { arrayFilters: [{ "day.day": item.day }, { "category.name": item.category }, { "time.time": item.time }] }
+          { arrayFilters: [{ "month.month": item.month, "day.day": item.day }, { "category.name": item.category }, { "time.time": item.time }] }
         );
         console.log("Payment state cleaned up:", item);
       }
