@@ -23,21 +23,21 @@ async function cleanUpPaymentStates() {
     if (timeDifference > 5) {
       for (const item of paymentStates[paymentId].data) {
         await collections.updateOne(
-          { "year": item.year, "month": item.month, "days.day": item.day, "days.categories.name": item.category, "days.categories.times.time": item.time },
+          { "year": item.year, "months.month": item.month, "months.days.day": item.day, "months.days.categories.name": item.category, "months.days.categories.times.time": item.time },
           {
             $set: {
-              "days.$[day].categories.$[category].times.$[time].available": true,
-              "days.$[day].categories.$[category].times.$[time].players": 0,
-              "days.$[day].categories.$[category].times.$[time].payed": null,
-              "days.$[day].categories.$[category].times.$[time].cost": 0,
-              "days.$[day].categories.$[category].times.$[time].bookedBy": null,
-              "days.$[day].categories.$[category].times.$[time].number": null,
-              "days.$[day].categories.$[category].times.$[time].email": null,
-              "days.$[day].categories.$[category].times.$[time].info": null,
-              "days.$[day].categories.$[category].times.$[time].paymentId": null
+              "months.$[month].days.$[day].categories.$[category].times.$[time].available": true,
+              "months.$[month].days.$[day].categories.$[category].times.$[time].players": 0,
+              "months.$[month].days.$[day].categories.$[category].times.$[time].payed": null,
+              "months.$[month].days.$[day].categories.$[category].times.$[time].cost": 0,
+              "months.$[month].days.$[day].categories.$[category].times.$[time].bookedBy": null,
+              "months.$[month].days.$[day].categories.$[category].times.$[time].number": null,
+              "months.$[month].days.$[day].categories.$[category].times.$[time].email": null,
+              "months.$[month].days.$[day].categories.$[category].times.$[time].info": null,
+              "months.$[month].days.$[day].categories.$[category].times.$[time].paymentId": null
             }
           },
-          { arrayFilters: [{ "month.month": item.month}, {"day.day": item.day }, { "category.name": item.category }, { "time.time": item.time }] }
+          { arrayFilters: [{ "month.month": item.month }, { "day.day": item.day }, { "category.name": item.category }, { "time.time": item.time }] }
         );
         console.log("Payment state cleaned up:", item);
       }
