@@ -42,7 +42,7 @@ async function run() {
 
     // Create an example document for a year with months and days
     const yearSchedule = {
-      year: 2024,
+      year: 2025,
       months: [
         {
           month: "January",
@@ -179,6 +179,6 @@ async function run() {
 
 let db = client.db("Mintescaperoom");
 
-//run().catch(console.dir);
+run().catch(console.dir);
 
 export default db;
