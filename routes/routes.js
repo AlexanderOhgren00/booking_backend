@@ -37,7 +37,7 @@ async function cleanUpPaymentStates() {
               "days.$[day].categories.$[category].times.$[time].paymentId": null
             }
           },
-          { arrayFilters: [{ "month.month": item.month, "day.day": item.day }, { "category.name": item.category }, { "time.time": item.time }] }
+          { arrayFilters: [{ "month.month": item.month}, {"day.day": item.day }, { "category.name": item.category }, { "time.time": item.time }] }
         );
         console.log("Payment state cleaned up:", item);
       }
