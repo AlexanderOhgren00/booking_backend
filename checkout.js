@@ -4,13 +4,13 @@ import cors from "cors";
 import herokuSSLRedirect from "heroku-ssl-redirect";
 import helmet from "helmet";
 import cookieParser from 'cookie-parser';
-import { WebsocketServer } from "ws";
+import { WebSocketServer } from "ws";
 import http from "http";
 
 const sslRedirect = herokuSSLRedirect.default;
 const app = express();
-const server = HTMLOutputElement.createServer(app)
-export const wss = new WebsocketServer({ server });
+const server = http.createServer(app)
+export const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 3000;
 
