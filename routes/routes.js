@@ -4,12 +4,21 @@ import db from "../db/connections.js";
 import rateLimit from 'express-rate-limit';
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { wss } from "../checkout.js";
 
 const router = express.Router();
 const key = process.env.NETS_KEY;
 const jwt_key = process.env.JWT_SECRET;
 
 const paymentStates = {};
+
+function broadcast(data) {
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(data));
+    }
+  });
+}
 
 async function cleanUpPaymentStates() {
   const currentDate = new Date();
@@ -85,7 +94,7 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     paymentStates[paymentId] = { date: currentDate, data: body.combinedData };
     console.log("Payment states:", paymentStates);
 
-    res.status(200).json({ message: "Payment initialized", paymentId, date: currentDate});
+    res.status(200).json({ message: "Payment initialized", paymentId, date: currentDate });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
