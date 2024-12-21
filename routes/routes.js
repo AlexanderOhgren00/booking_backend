@@ -255,7 +255,7 @@ router.post("/login", loginLimiter, async (req, res) => {
       secure: true,
     })
 
-    res.status(200).json({ message: "Login successful", token, privilage });
+    res.status(200).json({ message: "Login successful", token, privilage, username });
 
   } catch (error) {
     console.error(error);
