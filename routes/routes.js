@@ -95,6 +95,11 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     console.log("Payment states:", paymentStates);
 
     res.status(200).json({ message: "Payment initialized", paymentId, date: currentDate });
+    broadcast({ 
+      type: "initialize", 
+      message: "Update"
+    });
+    
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
