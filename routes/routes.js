@@ -430,6 +430,10 @@ router.patch("/checkout", async (req, res) => {
       { arrayFilters: [{ "month.month": month }, { "day.day": day }, { "category.name": category }, { "time.time": time }] }
     );
     res.json(result);
+    broadcast({ 
+      type: "payment-complete", 
+      message: "Update"
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
