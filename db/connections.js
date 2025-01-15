@@ -42,7 +42,7 @@ async function run() {
 
     // Create an example document for a year with months and days
     const yearSchedule = {
-      year: 2026,
+      year: 2025,
       months: [
         {
           month: "January",
