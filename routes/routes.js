@@ -63,7 +63,7 @@ async function cleanUpPaymentStates() {
   }
 }
 
-setInterval(cleanUpPaymentStates, 60 * 1000);
+setInterval(cleanUpPaymentStates, 300 * 1000);
 
 router.post("/v1/payments", async (req, res) => {
   try {
