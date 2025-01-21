@@ -394,6 +394,16 @@ router.patch("/users", async (req, res) => {
   }
 });
 
+router.get("/discounts", async (req, res) => {
+  try {
+    const discounts = await db.collection("discounts").find({}).toArray();
+    res.json(discounts);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post("/discounts", async (req, res) => {
   const { discount } = req.body;
 
