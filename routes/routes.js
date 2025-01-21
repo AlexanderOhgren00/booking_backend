@@ -404,6 +404,31 @@ router.get("/discounts", async (req, res) => {
   }
 });
 
+router.post("/createDiscount", async (req, res) => {
+  const { key, sale, currency, expiryDate } = req.body;
+
+  if (!key || !sale || !currency || !expiryDate) {
+    return res.status(400).json({ error: "All fields are required" });
+  }
+
+  try {
+    const collections = db.collection("discounts");
+
+    const discountExist = await collections.findOne({ key });
+    if (discountExist) {
+      return res.status(400).json({ error: "Discount code already exists" });
+    }
+
+    await collections.insertOne({ key, sale, currency, expiryDate });
+
+    res.status(201).json({ message: "Discount created" });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post("/discounts", async (req, res) => {
   const { discount } = req.body;
 
