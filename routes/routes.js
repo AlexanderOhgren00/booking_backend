@@ -404,6 +404,28 @@ router.get("/discounts", async (req, res) => {
   }
 });
 
+router.delete("deleteDiscount", async (req, res) => {
+  const { key } = req.body;
+
+  if (!key) {
+    return res.status(400).json({ error: "Discount key is required" });
+  }
+
+  try {
+    const collections = db.collection("discounts");
+    const result = await collections.deleteOne({ key });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: "Discount not found" });
+    }
+
+    res.status(200).json({ message: "Discount deleted" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post("/createDiscount", async (req, res) => {
   const { key, sale, currency, expiryDate } = req.body;
 
