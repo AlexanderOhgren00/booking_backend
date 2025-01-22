@@ -404,7 +404,7 @@ router.get("/discounts", async (req, res) => {
   }
 });
 
-router.delete("deleteDiscount", async (req, res) => {
+router.delete("/deleteDiscount", async (req, res) => {
   const { key } = req.body;
 
   if (!key) {
