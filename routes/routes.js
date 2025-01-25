@@ -514,6 +514,27 @@ router.patch("/checkout", async (req, res) => {
   }
 });
 
+router.patch("/changeTime", async (req, res) => {
+  const { year, month, day, category, time, newTime } = req.body;
+
+  try {
+    let collections = db.collection("years");
+    let result = await collections.updateOne(
+      { "year": year, "months.month": month, "months.days.day": day, "months.days.categories.name": category, "months.days.categories.times.time": time },
+      {
+        $set: {
+          "months.$[month].days.$[day].categories.$[category].times.$[time].time": newTime
+        }
+      },
+      { arrayFilters: [{ "month.month": month }, { "day.day": day }, { "category.name": category }, { "time.time": time }] }
+    );
+    res.json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+})
+
 export default router;
 
 // const order = {
