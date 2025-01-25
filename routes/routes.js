@@ -515,25 +515,65 @@ router.patch("/checkout", async (req, res) => {
 });
 
 router.patch("/changeTime", async (req, res) => {
-  const { year, month, day, category, time, newTime } = req.body;
+  const { year, month, day, category, oldTime, newTime } = req.body;
 
   try {
     let collections = db.collection("years");
+    
+    // First check if time slot exists
+    const existingDoc = await collections.findOne({
+      "year": year,
+      "months.month": month,
+      "months.days.day": day,
+      "months.days.categories.name": category,
+      "months.days.categories.times.time": oldTime
+    });
+
+    if (!existingDoc) {
+      return res.status(404).json({ error: "Time slot not found" });
+    }
+
+    // Update the time slot
     let result = await collections.updateOne(
-      { "year": year, "months.month": month, "months.days.day": day, "months.days.categories.name": category, "months.days.categories.times.time": time },
+      { 
+        "year": year,
+        "months.month": month,
+        "months.days.day": day,
+        "months.days.categories.name": category,
+        "months.days.categories.times.time": oldTime 
+      },
       {
         $set: {
           "months.$[month].days.$[day].categories.$[category].times.$[time].time": newTime
         }
       },
-      { arrayFilters: [{ "month.month": month }, { "day.day": day }, { "category.name": category }, { "time.time": time }] }
+      { 
+        arrayFilters: [
+          { "month.month": month },
+          { "day.day": day },
+          { "category.name": category },
+          { "time.time": oldTime }
+        ]
+      }
     );
-    res.json(result);
+
+    if (result.modifiedCount === 0) {
+      return res.status(400).json({ error: "Time slot could not be updated" });
+    }
+
+    // Broadcast update via WebSocket
+    broadcast({ 
+      type: "timeUpdate",
+      data: { year, month, day, category, oldTime, newTime }
+    });
+
+    res.json({ message: "Time updated successfully", result });
+
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Server error while updating time" });
   }
-})
+});
 
 export default router;
 
