@@ -575,6 +575,67 @@ router.patch("/changeTime", async (req, res) => {
   }
 });
 
+router.patch("/bulkChangeTime", async (req, res) => {
+  const { updates } = req.body;
+
+  if (!updates || !Array.isArray(updates)) {
+    return res.status(400).json({ error: "Invalid updates format" });
+  }
+
+  try {
+    const collections = db.collection("years");
+    const results = [];
+
+    for (const update of updates) {
+      const { year, month, day, category, oldTime, newTime } = update;
+
+      const result = await collections.updateOne(
+        {
+          "year": year,
+          "months.month": month,
+          "months.days.day": day,
+          "months.days.categories.name": category,
+          "months.days.categories.times.time": oldTime
+        },
+        {
+          $set: {
+            "months.$[month].days.$[day].categories.$[category].times.$[time].time": newTime
+          }
+        },
+        {
+          arrayFilters: [
+            { "month.month": month },
+            { "day.day": day },
+            { "category.name": category },
+            { "time.time": oldTime }
+          ]
+        }
+      );
+
+      results.push({
+        oldTime,
+        newTime,
+        success: result.modifiedCount > 0
+      });
+    }
+
+    // Broadcast updates via WebSocket
+    broadcast({
+      type: "bulkTimeUpdate",
+      data: updates
+    });
+
+    res.json({
+      message: "Bulk time update completed",
+      results
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error while updating times" });
+  }
+});
+
 export default router;
 
 // const order = {
