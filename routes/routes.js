@@ -482,7 +482,7 @@ router.get("/years", async (req, res) => {
 });
 
 router.patch("/checkout", async (req, res) => {
-  const { year, month, day, category, time, cost, players, payed, available, bookedBy, number, email, info, paymentId, discount } = req.body;
+  const { year, month, day, category, time, cost, players, payed, available, bookedBy, number, email, info, paymentId, discount, discountType } = req.body;
 
   try {
     let collections = db.collection("years");
@@ -500,6 +500,7 @@ router.patch("/checkout", async (req, res) => {
           "months.$[month].days.$[day].categories.$[category].times.$[time].info": info,
           "months.$[month].days.$[day].categories.$[category].times.$[time].paymentId": paymentId,
           "months.$[month].days.$[day].categories.$[category].times.$[time].discount": discount,
+          "months.$[month].days.$[day].categories.$[category].times.$[time].discountType": discountType,
         }
       },
       { arrayFilters: [{ "month.month": month }, { "day.day": day }, { "category.name": category }, { "time.time": time }] }
