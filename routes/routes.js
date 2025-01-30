@@ -444,6 +444,11 @@ router.post("/createDiscount", async (req, res) => {
     await collections.insertOne({ key, sale, currency, expiryDate });
 
     res.status(201).json({ message: "Discount created" });
+    
+    broadcast({
+      type: "discount-created",
+      message: "Update",
+    });
 
   } catch (error) {
     console.error(error);
