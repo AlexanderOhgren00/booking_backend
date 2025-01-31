@@ -12,59 +12,39 @@ const app = express();
 const server = http.createServer(app);
 export const wss = new WebSocketServer({ server });
 
-const HEARTBEAT_INTERVAL = 30000;
-const HEARTBEAT_TIMEOUT = 35000;
+wss.on("connection", (ws) => {
+  console.log("Client connected");
 
-wss.on('connection', (ws) => {
-  console.log('Client connected');
-  
-  ws.isAlive = true;
-  
-  ws.on('pong', () => {
-    ws.isAlive = true;
+  // Send a welcome message
+  ws.send(JSON.stringify({ message: "Connected to WebSocket server" }));
+
+  // Handle messages from clients
+  ws.on("message", (message) => {
+      console.log(`Received: ${message}`);
+      // Echo the message back to the client
+      ws.send(`Server received: ${message}`);
   });
 
-  ws.on('message', (message) => {
-    try {
-      const data = JSON.parse(message);
-      if (data.type === 'ping') {
-        ws.send(JSON.stringify({ type: 'pong' }));
+  // Handle errors
+  ws.on("error", (err) => {
+      console.error("WebSocket error:", err);
+  });
+
+  // Handle disconnection
+  ws.on("close", () => {
+      console.log("Client disconnected");
+  });
+
+  // Keep connection alive
+  const keepAliveInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ping" })); // Send a keep-alive message
       }
-      console.log('Received:', data);
-    } catch (error) {
-      console.error('Error parsing message:', error);
-    }
+  }, 30000); // Every 30 seconds
+
+  ws.on("close", () => {
+      clearInterval(keepAliveInterval);
   });
-
-  ws.on('close', () => {
-    console.log('Client disconnected');
-    ws.isAlive = false;
-  });
-
-  ws.on('error', (error) => {
-    console.error('WebSocket error:', error);
-    ws.isAlive = false;
-  });
-});
-
-// Heartbeat interval to check connection status
-const interval = setInterval(() => {
-  wss.clients.forEach((ws) => {
-    if (ws.isAlive === false) {
-      return ws.terminate();
-    }
-    ws.isAlive = false;
-    ws.ping();
-  });
-}, HEARTBEAT_INTERVAL);
-
-wss.on('close', () => {
-  clearInterval(interval);
-});
-
-
-wss.on('close', () => {
-  clearInterval(interval);
 });
 
 app.set('wss', wss);
