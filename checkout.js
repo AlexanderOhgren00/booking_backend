@@ -28,8 +28,6 @@ wss.on("connection", (ws) => {
   // Handle messages from clients
   ws.on("message", (message) => {
       console.log(`Received: ${message}`);
-      // Echo the message back to the client
-      ws.send(`Server received: ${message}`);
   });
 
   // Handle errors
