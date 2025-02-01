@@ -393,7 +393,7 @@ router.patch("/users", async (req, res) => {
 
     res.json(result);
     broadcast({
-      type: "updateUser",
+      type: "updateUsers",
       message: "Update",
     });
 
