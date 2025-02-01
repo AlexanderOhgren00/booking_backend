@@ -420,6 +420,11 @@ router.delete("/deleteDiscount", async (req, res) => {
     }
 
     res.status(200).json({ message: "Discount deleted" });
+    broadcast({
+      type: "updateDiscount",
+      message: "Update",
+    })
+    
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
@@ -446,7 +451,7 @@ router.post("/createDiscount", async (req, res) => {
     res.status(201).json({ message: "Discount created" });
     
     broadcast({
-      type: "discount-created",
+      type: "updateDiscount",
       message: "Update",
     });
 
