@@ -340,6 +340,10 @@ router.post("/register", async (req, res) => {
     await db.collection("users").insertOne({ username, passwordHash, privilage });
 
     res.status(201).json({ message: "User created" });
+    broadcast({
+      type: "updateUsers",
+      message: "Update",
+    });
 
   } catch (error) {
     console.error(error);
@@ -388,6 +392,11 @@ router.patch("/users", async (req, res) => {
     );
 
     res.json(result);
+    broadcast({
+      type: "updateUser",
+      message: "Update",
+    });
+
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
@@ -420,11 +429,12 @@ router.delete("/deleteDiscount", async (req, res) => {
     }
 
     res.status(200).json({ message: "Discount deleted" });
+
     broadcast({
       type: "updateDiscount",
       message: "Update",
     })
-    
+
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
