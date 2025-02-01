@@ -351,6 +351,42 @@ router.post("/register", async (req, res) => {
   }
 });
 
+router.delete("/users", async (req, res) => {
+  const { username } = req.body;
+
+  if (!username) {
+    return res.status(400).json({ error: "Username is required" });
+  }
+
+  try {
+    const collections = db.collection("users");
+    
+    // Check if user exists
+    const user = await collections.findOne({ username });
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const result = await collections.deleteOne({ username });
+
+    if (result.deletedCount === 1) {
+      // Broadcast user deletion
+      broadcast({
+        type: "updateUsers",
+        message: "Update",
+      });
+      
+      res.json({ message: "User deleted successfully" });
+    } else {
+      res.status(400).json({ error: "Failed to delete user" });
+    }
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get("/users", async (req, res) => {
   try {
     const users = await db.collection("users").find({}).toArray();
