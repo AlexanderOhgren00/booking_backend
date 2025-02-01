@@ -512,7 +512,7 @@ router.patch("/checkout", async (req, res) => {
     );
     res.json(result);
     broadcast({ 
-      type: "payment-complete", 
+      type: "timeUpdate", 
       message: "Update"
     });
   } catch (error) {
