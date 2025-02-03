@@ -411,9 +411,11 @@ router.patch("/users", async (req, res) => {
 
     let passwordHash = user.passwordHash;
 
-    const isMatch = await bcrypt.compare(password, user.passwordHash);
-    if (!isMatch) {
-      passwordHash = await bcrypt.hash(password, 10);
+    if (password !== "") {
+      const isMatch = await bcrypt.compare(password, user.passwordHash);
+      if (!isMatch) {
+        passwordHash = await bcrypt.hash(password, 10);
+      }
     }
 
     const result = await collections.updateOne(
