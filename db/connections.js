@@ -42,7 +42,7 @@ async function run() {
     
     // Create flattened documents for better querying
     const bookings = [];
-    const year = 2026;
+    const year = 2025;
     const months = [
       { name: "January", days: 31 },
       { name: "February", days: 28 },
@@ -97,6 +97,6 @@ async function run() {
 
 let db = client.db("Mintescaperoom");
 
-//run().catch(console.dir);
+run().catch(console.dir);
 
 export default db;
