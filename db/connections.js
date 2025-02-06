@@ -1,7 +1,6 @@
 import { MongoClient, ServerApiVersion } from "mongodb";
 
 const uri = process.env.MONGODB_URI;
-let db;
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -17,7 +16,6 @@ try {
   console.log(
     "Pinged your deployment. You successfully connected to MongoDB!"
   );
-  db = client.db("Mintescaperoom");
 } catch (err) {
   console.error(err);
 }
@@ -179,8 +177,8 @@ async function run() {
   }
 }
 
-//let db = client.db("Mintescaperoom");
+let db = client.db("Mintescaperoom");
 
-run().catch(console.dir);
+//run().catch(console.dir);
 
 export default db;
