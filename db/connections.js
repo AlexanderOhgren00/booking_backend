@@ -22,155 +22,73 @@ try {
 
 async function run() {
   try {
-    const collection = db.collection('years');
+    const collection = db.collection('bookings');
 
     // Define the time slots with additional info
-    const timeSlots = [
-      { "time": "09:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
-      { "time": "11:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
-      { "time": "12:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
-      { "time": "14:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
-      { "time": "15:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
-      { "time": "17:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
-      { "time": "18:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
-      { "time": "20:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
-      { "time": "21:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null}
-    ];
-
-    // Define the categories
-    const categories = ["SCHOOL OF MAGIC", "HAUNTED HOTEL", "ARK RAIDER", "SUBMARINE", "JURRASIC EXPERIMENT"];
-
-    // Create an example document for a year with months and days
-    const yearSchedule = {
-      year: 2026,
-      months: [
-        {
-          month: "January",
-          days: Array.from({ length: 31 }, (_, i) => ({
-            day: i + 1,
-            categories: categories.map(category => ({
-              name: category,
-              times: timeSlots
-            }))
-          }))
-        },
-        {
-          month: "February",
-          days: Array.from({ length: 28 }, (_, i) => ({
-            day: i + 1,
-            categories: categories.map(category => ({
-              name: category,
-              times: timeSlots
-            }))
-          }))
-        },
-        {
-          month: "March",
-          days: Array.from({ length: 31 }, (_, i) => ({
-            day: i + 1,
-            categories: categories.map(category => ({
-              name: category,
-              times: timeSlots
-            }))
-          }))
-        },
-        {
-          month: "April",
-          days: Array.from({ length: 30 }, (_, i) => ({
-            day: i + 1,
-            categories: categories.map(category => ({
-              name: category,
-              times: timeSlots
-            }))
-          }))
-        },
-        {
-          month: "May",
-          days: Array.from({ length: 31 }, (_, i) => ({
-            day: i + 1,
-            categories: categories.map(category => ({
-              name: category,
-              times: timeSlots
-            }))
-          }))
-        },
-        {
-          month: "June",
-          days: Array.from({ length: 30 }, (_, i) => ({
-            day: i + 1,
-            categories: categories.map(category => ({
-              name: category,
-              times: timeSlots
-            }))
-          }))
-        },
-        {
-          month: "July",
-          days: Array.from({ length: 31 }, (_, i) => ({
-            day: i + 1,
-            categories: categories.map(category => ({
-              name: category,
-              times: timeSlots
-            }))
-          }))
-        },
-        {
-          month: "August",
-          days: Array.from({ length: 31 }, (_, i) => ({
-            day: i + 1,
-            categories: categories.map(category => ({
-              name: category,
-              times: timeSlots
-            }))
-          }))
-        },
-        {
-          month: "September",
-          days: Array.from({ length: 30 }, (_, i) => ({
-            day: i + 1,
-            categories: categories.map(category => ({
-              name: category,
-              times: timeSlots
-            }))
-          }))
-        },
-        {
-          month: "October",
-          days: Array.from({ length: 31 }, (_, i) => ({
-            day: i + 1,
-            categories: categories.map(category => ({
-              name: category,
-              times: timeSlots
-            }))
-          }))
-        },
-        {
-          month: "November",
-          days: Array.from({ length: 30 }, (_, i) => ({
-            day: i + 1,
-            categories: categories.map(category => ({
-              name: category,
-              times: timeSlots
-            }))
-          }))
-        },
-        {
-          month: "December",
-          days: Array.from({ length: 31 }, (_, i) => ({
-            day: i + 1,
-            categories: categories.map(category => ({
-              name: category,
-              times: timeSlots
-            }))
-          }))
-        },
-        // Add more months as needed
-      ]
+    const timeSlot = {
+      "available": true,
+      "cost": 0,
+      "players": 0,
+      "bookedBy": null,
+      "payed": null,
+      "number": null,
+      "email": null,
+      "info": null,
+      "paymentId": null
     };
 
-    // Insert the document into the collection
-    const result = await collection.insertOne(yearSchedule);
-    console.log("Document inserted with _id: ", result.insertedId);
+    const times = ["09:30", "11:00", "12:30", "14:00", "15:30", "17:00", "18:30", "20:00", "21:30"];
+    const categories = ["SCHOOL OF MAGIC", "HAUNTED HOTEL", "ARK RAIDER", "SUBMARINE", "JURRASIC EXPERIMENT"];
+    
+    // Create flattened documents for better querying
+    const bookings = [];
+    const year = 2026;
+    const months = [
+      { name: "January", days: 31 },
+      { name: "February", days: 28 },
+      { name: "March", days: 31 },
+      { name: "April", days: 30 },
+      { name: "May", days: 31 },
+      { name: "June", days: 30 },
+      { name: "July", days: 31 },
+      { name: "August", days: 31 },
+      { name: "September", days: 30 },
+      { name: "October", days: 31 },
+      { name: "November", days: 30 },
+      { name: "December", days: 31 }
+    ];
+
+    // Create flattened structure
+    months.forEach(month => {
+      for (let day = 1; day <= month.days; day++) {
+        categories.forEach(category => {
+          times.forEach(time => {
+            bookings.push({
+              year,
+              month: month.name,
+              day,
+              category,
+              time,
+              ...timeSlot,
+              // Add compound index fields for faster queries
+              dateString: `${year}-${month.name}-${day}`,
+              timeSlotId: `${year}-${month.name}-${day}-${category}-${time}`
+            });
+          });
+        });
+      }
+    });
+
+    // Create indexes for common queries
+    await collection.createIndex({ timeSlotId: 1 });
+    await collection.createIndex({ dateString: 1 });
+    await collection.createIndex({ year: 1, month: 1, day: 1 });
+    await collection.createIndex({ available: 1 });
+    await collection.createIndex({ category: 1 });
+
+    // Insert all bookings
+    const result = await collection.insertMany(bookings);
+    console.log(`${result.insertedCount} bookings inserted`);
 
   } finally {
     await client.close();
