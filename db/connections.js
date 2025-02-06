@@ -177,7 +177,7 @@ async function run() {
   }
 }
 
-let db = client.db("Mintescaperoom");
+//let db = client.db("Mintescaperoom");
 
 run().catch(console.dir);
 
