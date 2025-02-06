@@ -26,15 +26,15 @@ async function run() {
 
     // Define the time slots with additional info
     const timeSlots = [
-      { "time": "9:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null, "discount": null, "discountType": null },
-      { "time": "11:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null, "discount": null, "discountType": null },
-      { "time": "12:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null, "discount": null, "discountType": null },
-      { "time": "14:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null, "discount": null, "discountType": null },
-      { "time": "15:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null, "discount": null, "discountType": null },
-      { "time": "17:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null, "discount": null, "discountType": null },
-      { "time": "18:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null, "discount": null, "discountType": null },
-      { "time": "20:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null, "discount": null, "discountType": null },
-      { "time": "21:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null, "discount": null, "discountType": null }
+      { "time": "09:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
+      { "time": "11:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
+      { "time": "12:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
+      { "time": "14:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
+      { "time": "15:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
+      { "time": "17:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
+      { "time": "18:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
+      { "time": "20:00", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null},
+      { "time": "21:30", "available": true, "cost": 0, "players": 0, "bookedBy": null, "payed": null, "number": null, "email": null, "info": null, "paymentId": null}
     ];
 
     // Define the categories
@@ -42,7 +42,7 @@ async function run() {
 
     // Create an example document for a year with months and days
     const yearSchedule = {
-      year: 2026,
+      year: 2025,
       months: [
         {
           month: "January",
@@ -179,6 +179,6 @@ async function run() {
 
 let db = client.db("Mintescaperoom");
 
-//run().catch(console.dir);
+run().catch(console.dir);
 
 export default db;
