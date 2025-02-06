@@ -97,6 +97,6 @@ async function run() {
 
 let db = client.db("Mintescaperoom");
 
-run().catch(console.dir);
+//run().catch(console.dir);
 
 export default db;

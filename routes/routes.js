@@ -544,36 +544,15 @@ router.get("/years", haltOnTimedout, async (req, res) => {
 });
 
 router.patch("/checkout", async (req, res) => {
-  const { year, month, day, category, time, cost, players, payed, available, bookedBy, number, email, info, paymentId, discount, discountType } = req.body;
-
+  const { year, month, day, category, time, ...updateData } = req.body;
   try {
-    let collections = db.collection("years");
-    let result = await collections.updateOne(
-      { "year": year, "months.month": month, "months.days.day": day, "months.days.categories.name": category, "months.days.categories.times.time": time },
-      {
-        $set: {
-          "months.$[month].days.$[day].categories.$[category].times.$[time].available": available,
-          "months.$[month].days.$[day].categories.$[category].times.$[time].players": players,
-          "months.$[month].days.$[day].categories.$[category].times.$[time].payed": payed,
-          "months.$[month].days.$[day].categories.$[category].times.$[time].cost": cost,
-          "months.$[month].days.$[day].categories.$[category].times.$[time].bookedBy": bookedBy,
-          "months.$[month].days.$[day].categories.$[category].times.$[time].number": number,
-          "months.$[month].days.$[day].categories.$[category].times.$[time].email": email,
-          "months.$[month].days.$[day].categories.$[category].times.$[time].info": info,
-          "months.$[month].days.$[day].categories.$[category].times.$[time].paymentId": paymentId,
-          "months.$[month].days.$[day].categories.$[category].times.$[time].discount": discount,
-          "months.$[month].days.$[day].categories.$[category].times.$[time].discountType": discountType,
-        }
-      },
-      { arrayFilters: [{ "month.month": month }, { "day.day": day }, { "category.name": category }, { "time.time": time }] }
+    const result = await db.collection("bookings").updateOne(
+      { timeSlotId: `${year}-${month}-${day}-${category}-${time}` },
+      { $set: updateData }
     );
     res.json(result);
-    broadcast({ 
-      type: "timeUpdate", 
-      message: "Update"
-    });
+    broadcast({ type: "timeUpdate", message: "Update" });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -697,6 +676,21 @@ router.patch("/bulkChangeTime", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Server error while updating times" });
+  }
+});
+
+// Get all bookings for a specific day
+router.get("/bookings/:year/:month/:day", async (req, res) => {
+  const { year, month, day } = req.params;
+  try {
+    const bookings = await db.collection("bookings").find({
+      year: parseInt(year),
+      month: month,
+      day: parseInt(day)
+    }).toArray();
+    res.json(bookings);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
