@@ -6,6 +6,7 @@ import helmet from "helmet";
 import cookieParser from 'cookie-parser';
 import { WebSocketServer, WebSocket } from "ws";
 import http from "http";
+import timeout from "connect-timeout";
 
 const sslRedirect = herokuSSLRedirect.default;
 const app = express();
@@ -53,6 +54,7 @@ wss.on("connection", (ws) => {
 });
 
 app.set('wss', wss);
+app.use(timeout("10s"));
 app.use(sslRedirect());
 app.use(cors(corsOptions));
 app.use(helmet());

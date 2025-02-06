@@ -12,6 +12,10 @@ const jwt_key = process.env.JWT_SECRET;
 
 const paymentStates = {};
 
+function haltOnTimedout (req, res, next) {
+  if (!req.timedout) next()
+}
+
 function broadcast(data) {
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
@@ -533,7 +537,7 @@ router.get("/months", async (req, res) => {
   res.json(result);
 });
 
-router.get("/years", async (req, res) => {
+router.get("/years", haltOnTimedout, async (req, res) => {
   let collections = db.collection("years")
   let result = await collections.find({}).toArray();
   res.json(result);
