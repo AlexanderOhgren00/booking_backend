@@ -445,6 +445,41 @@ router.patch("/users", async (req, res) => {
   }
 });
 
+router.get("/roomDiscounts", async (req, res) => {
+  try {
+    const discounts = await db.collection("roomDiscounts").find({}).toArray();
+    res.json(discounts);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/roomDiscounts", async (req, res) => {
+  const { key, PersonCost } = req.body;
+
+  try {
+    const collections = db.collection("roomDiscounts");
+
+    const discountExist = await collections.findOne({ key });
+    if (discountExist) {
+      return res.status(400).json({ error: "Discount code already exists" });
+    }
+
+    await collections.insertOne({ key, PersonCost });
+
+    res.status(201).json({ message: "Discount created" });
+
+    broadcast({
+      type: "updateRoomDiscounts",
+      message: "Update",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get("/discounts", async (req, res) => {
   try {
     const discounts = await db.collection("discounts").find({}).toArray();
