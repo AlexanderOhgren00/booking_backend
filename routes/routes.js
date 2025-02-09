@@ -12,7 +12,7 @@ const jwt_key = process.env.JWT_SECRET;
 
 const paymentStates = {};
 
-function haltOnTimedout (req, res, next) {
+function haltOnTimedout(req, res, next) {
   if (!req.timedout) next()
 }
 
@@ -97,8 +97,8 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
 
     for (const existingPaymentId in paymentStates) {
       const existingData = paymentStates[existingPaymentId].data;
-      const hasConflict = body.combinedData.some(newItem => 
-        existingData.some(existingItem => 
+      const hasConflict = body.combinedData.some(newItem =>
+        existingData.some(existingItem =>
           existingItem.year === newItem.year &&
           existingItem.month === newItem.month &&
           existingItem.day === newItem.day &&
@@ -116,11 +116,11 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     console.log("Payment states:", paymentStates);
 
     res.status(200).json({ message: "Payment initialized", paymentId, date: currentDate });
-    broadcast({ 
-      type: "initialize", 
+    broadcast({
+      type: "initialize",
       message: "Update"
     });
-    
+
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
@@ -364,7 +364,7 @@ router.delete("/users", async (req, res) => {
 
   try {
     const collections = db.collection("users");
-    
+
     // Check if user exists
     const user = await collections.findOne({ username });
     if (!user) {
@@ -379,7 +379,7 @@ router.delete("/users", async (req, res) => {
         type: "updateUsers",
         message: "Update",
       });
-      
+
       res.json({ message: "User deleted successfully" });
     } else {
       res.status(400).json({ error: "Failed to delete user" });
@@ -452,6 +452,81 @@ router.get("/roomDiscounts", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+router.patch("/bulkRoomDiscount", async (req, res) => {
+  const { updates, bulk } = req.body;
+
+  if (!updates || !Array.isArray(updates)) {
+    return res.status(400).json({ error: "Updates array is required" });
+  }
+
+  try {
+    const collections = db.collection("bookings");
+    const results = [];
+    const MONTHS = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"
+    ];
+
+    for (const update of updates) {
+      const { year, day, time, category, discount } = update;
+      
+      // Get the weekday (0-6, where 0 is Sunday)
+      const date = new Date(year, MONTHS.indexOf(update.month), day);
+      const weekday = date.getDay();
+
+      // Update all months and matching weekdays
+      for (const month of MONTHS) {
+        // Get the number of days in this month
+        const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
+        
+        // Check each day in the month
+        for (let monthDay = 1; monthDay <= daysInMonth; monthDay++) {
+          // Check if this day is the same weekday
+          const currentDate = new Date(year, MONTHS.indexOf(month), monthDay);
+          if (currentDate.getDay() === weekday) {
+            const result = await collections.updateOne(
+              { 
+                year: parseInt(year),
+                month: month,
+                day: monthDay,
+                category: category,
+                time: time,
+                available: true // Only update if available is true
+              },
+              { 
+                $set: { 
+                  discount: discount 
+                }
+              }
+            );
+
+            results.push({
+              timeSlotId: `${year}-${month}-${monthDay}-${category}-${time}`,
+              success: result.modifiedCount > 0
+            });
+          }
+        }
+      }
+    }
+
+    // Broadcast the update via WebSocket
+    broadcast({
+      type: "bulkDiscountUpdate",
+      data: { updates }
+    });
+
+    res.json({
+      message: "Bulk discount update completed",
+      results,
+      modifiedCount: results.filter(r => r.success).length
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error while updating discounts" });
   }
 });
 
@@ -564,7 +639,7 @@ router.post("/createDiscount", async (req, res) => {
     await collections.insertOne({ key, sale, currency, expiryDate });
 
     res.status(201).json({ message: "Discount created" });
-    
+
     broadcast({
       type: "updateDiscount",
       message: "Update",
@@ -625,7 +700,7 @@ router.patch("/changeTime", async (req, res) => {
 
   try {
     let collections = db.collection("years");
-    
+
     // First check if time slot exists
     const existingDoc = await collections.findOne({
       "year": year,
@@ -641,19 +716,19 @@ router.patch("/changeTime", async (req, res) => {
 
     // Update the time slot
     let result = await collections.updateOne(
-      { 
+      {
         "year": year,
         "months.month": month,
         "months.days.day": day,
         "months.days.categories.name": category,
-        "months.days.categories.times.time": oldTime 
+        "months.days.categories.times.time": oldTime
       },
       {
         $set: {
           "months.$[month].days.$[day].categories.$[category].times.$[time].time": newTime
         }
       },
-      { 
+      {
         arrayFilters: [
           { "month.month": month },
           { "day.day": day },
@@ -668,7 +743,7 @@ router.patch("/changeTime", async (req, res) => {
     }
 
     // Broadcast update via WebSocket
-    broadcast({ 
+    broadcast({
       type: "timeUpdate",
       data: { year, month, day, category, oldTime, newTime }
     });
