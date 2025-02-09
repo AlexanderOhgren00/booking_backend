@@ -455,6 +455,34 @@ router.get("/roomDiscounts", async (req, res) => {
   }
 });
 
+router.delete("/deleteRoomDiscount", async (req, res) => {
+  const { key } = req.body;
+
+  if (!key) {
+    return res.status(400).json({ error: "Discount key is required" });
+  }
+
+  try {
+    const collections = db.collection("roomDiscounts");
+    const result = await collections.deleteOne({ key });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: "Discount not found" });
+    }
+
+    res.status(200).json({ message: "Discount deleted" });
+
+    broadcast({
+      type: "updateRoomDiscounts",
+      message: "Update",
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post("/roomDiscounts", async (req, res) => {
   const { key, PersonCost, color } = req.body;
 
