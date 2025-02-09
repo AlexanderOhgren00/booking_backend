@@ -465,12 +465,8 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
   try {
     const collections = db.collection("bookings");
     const results = [];
-    const MONTHS = [
-      "January", "February", "March", "April", "May", "June",
-      "July", "August", "September", "October", "November", "December"
-    ];
-
     const currentYear = new Date().getFullYear();
+    
     // Get all years from current year up to 2030
     const years = Array.from(
       { length: 2030 - currentYear + 1 }, 
@@ -478,38 +474,38 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
     );
 
     for (const update of updates) {
-      const { time, category, discount, weekday } = update;
+      const { time, category, discount, weekday, month } = update;
 
-      // Update all years and months
+      // Update specific month for all years
       for (const year of years) {
-        for (const month of MONTHS) {
-          // Get the number of days in this month
-          const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
-          
-          // Check each day in the month
-          for (let day = 1; day <= daysInMonth; day++) {
-            // Check if this day matches the selected weekday
-            const currentDate = new Date(year, MONTHS.indexOf(month), day);
-            if (currentDate.getDay() === weekday) {
-              const result = await collections.updateOne(
-                { 
-                  year: year,
-                  month: month,
-                  day: day,
-                  category: category,
-                  time: time,
-                  available: true // Only update if available is true
-                },
-                { 
-                  $set: { 
-                    discount: discount 
-                  }
+        // Get the number of days in this month
+        const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
+        
+        // Check each day in the month
+        for (let day = 1; day <= daysInMonth; day++) {
+          // Check if this day matches the selected weekday
+          const currentDate = new Date(year, MONTHS.indexOf(month), day);
+          if (currentDate.getDay() === weekday) {
+            const result = await collections.updateOne(
+              { 
+                year: year,
+                month: month,
+                day: day,
+                category: category,
+                time: time,
+                available: true // Only update if available is true
+              },
+              { 
+                $set: { 
+                  discount: discount 
                 }
-              );
+              }
+            );
 
+            if (result.modifiedCount > 0) {
               results.push({
                 timeSlotId: `${year}-${month}-${day}-${category}-${time}`,
-                success: result.modifiedCount > 0
+                success: true
               });
             }
           }
@@ -526,7 +522,7 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
     res.json({
       message: "Bulk discount update completed",
       results,
-      modifiedCount: results.filter(r => r.success).length
+      modifiedCount: results.length
     });
 
   } catch (error) {
