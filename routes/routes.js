@@ -470,43 +470,48 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
       "July", "August", "September", "October", "November", "December"
     ];
 
+    const currentYear = new Date().getFullYear();
+    // Get all years from current year up to 2030
+    const years = Array.from(
+      { length: 2030 - currentYear + 1 }, 
+      (_, i) => currentYear + i
+    );
+
     for (const update of updates) {
-      const { year, day, time, category, discount } = update;
-      
-      // Get the weekday (0-6, where 0 is Sunday)
-      const date = new Date(year, MONTHS.indexOf(update.month), day);
-      const weekday = date.getDay();
+      const { time, category, discount, weekday } = update;
 
-      // Update all months and matching weekdays
-      for (const month of MONTHS) {
-        // Get the number of days in this month
-        const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
-        
-        // Check each day in the month
-        for (let monthDay = 1; monthDay <= daysInMonth; monthDay++) {
-          // Check if this day is the same weekday
-          const currentDate = new Date(year, MONTHS.indexOf(month), monthDay);
-          if (currentDate.getDay() === weekday) {
-            const result = await collections.updateOne(
-              { 
-                year: parseInt(year),
-                month: month,
-                day: monthDay,
-                category: category,
-                time: time,
-                available: true // Only update if available is true
-              },
-              { 
-                $set: { 
-                  discount: discount 
+      // Update all years and months
+      for (const year of years) {
+        for (const month of MONTHS) {
+          // Get the number of days in this month
+          const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
+          
+          // Check each day in the month
+          for (let day = 1; day <= daysInMonth; day++) {
+            // Check if this day matches the selected weekday
+            const currentDate = new Date(year, MONTHS.indexOf(month), day);
+            if (currentDate.getDay() === weekday) {
+              const result = await collections.updateOne(
+                { 
+                  year: year,
+                  month: month,
+                  day: day,
+                  category: category,
+                  time: time,
+                  available: true // Only update if available is true
+                },
+                { 
+                  $set: { 
+                    discount: discount 
+                  }
                 }
-              }
-            );
+              );
 
-            results.push({
-              timeSlotId: `${year}-${month}-${monthDay}-${category}-${time}`,
-              success: result.modifiedCount > 0
-            });
+              results.push({
+                timeSlotId: `${year}-${month}-${day}-${category}-${time}`,
+                success: result.modifiedCount > 0
+              });
+            }
           }
         }
       }
