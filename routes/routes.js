@@ -456,7 +456,7 @@ router.get("/roomDiscounts", async (req, res) => {
 });
 
 router.post("/roomDiscounts", async (req, res) => {
-  const { key, PersonCost } = req.body;
+  const { key, PersonCost, color } = req.body;
 
   try {
     const collections = db.collection("roomDiscounts");
@@ -466,7 +466,7 @@ router.post("/roomDiscounts", async (req, res) => {
       return res.status(400).json({ error: "Discount code already exists" });
     }
 
-    await collections.insertOne({ key, PersonCost });
+    await collections.insertOne({ key, PersonCost, color });
 
     res.status(201).json({ message: "Discount created" });
 
