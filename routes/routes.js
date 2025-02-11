@@ -5,6 +5,13 @@ import rateLimit from 'express-rate-limit';
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { wss } from "../checkout.js";
+import fs from 'fs';
+import https from 'https';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const router = express.Router();
 const key = process.env.NETS_KEY;
@@ -834,6 +841,78 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
     res.json(bookings);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/swish/payment:instructionUUID", async (req, res) => {
+  // Create HTTPS agent with certificates
+  const agent = new https.Agent({
+    cert: fs.readFileSync(join(__dirname, '../ssl/public.pem'), { encoding: 'utf8' }),
+    key: fs.readFileSync(join(__dirname, '../ssl/private.key'), { encoding: 'utf8' }),
+    ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), { encoding: 'utf8' }),
+  });
+
+  const paymentRequest = {
+    payeeAlias: req.body.payeeAlias,
+    amount: req.body.amount,
+    currency: req.body.currency,
+    callbackUrl: req.body.callbackUrl,
+  };
+
+  try {
+    const swishResponse = await new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'cpc.getswish.net',
+        port: 443,
+        path: `/swish-cpcapi/api/v2/paymentrequests/${req.params.instructionUUID}`,
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        agent: agent
+      }, (res) => {
+        let data = '';
+        
+        res.on('data', chunk => {
+          data += chunk;
+        });
+
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            data: data ? JSON.parse(data) : null
+          });
+        });
+      });
+
+      req.on('error', reject);
+      req.write(JSON.stringify(paymentRequest));
+      req.end();
+    });
+
+    if (swishResponse.status === 201) {
+      broadcast({
+        type: 'swishPayment',
+        status: 'created',
+        paymentId: swishResponse.headers.location
+      });
+
+      res.status(201).json({
+        success: true,
+        paymentId: swishResponse.headers.location,
+        paymentRequest: paymentRequest
+      });
+    } else {
+      throw new Error('Payment initialization failed');
+    }
+
+  } catch (error) {
+    console.error('Swish payment error:', error);
+    res.status(500).json({ 
+      error: "Payment initialization failed",
+      details: error.message
+    });
   }
 });
 
