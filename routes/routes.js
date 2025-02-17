@@ -844,7 +844,7 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
   }
 });
 
-router.post("/swish/payment:instructionUUID", async (req, res) => {
+router.post("/swish/payment/:instructionUUID", async (req, res) => {
   // Create HTTPS agent with certificates
   const agent = new https.Agent({
     cert: fs.readFileSync(join(__dirname, '../ssl/public.pem'), { encoding: 'utf8' }),
