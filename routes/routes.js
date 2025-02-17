@@ -861,9 +861,9 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
       payeePaymentReference: "0123456789",
       callbackUrl: "https://mintbackend-0066444807ba.herokuapp.com/swish/callback",
       payerAlias: "4671234768",
-      payeeAlias: "1234679304",
+      payeeAlias: payeeAlias,
       amount: amount,
-      currency: "SEK",
+      currency: currency,
       message: "Payment for booking"
     };
 
