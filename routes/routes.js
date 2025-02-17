@@ -867,7 +867,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       }
     });
 
-    agent.on('socket', (socket) => {
+    httpsAgent.on('socket', (socket) => {
       socket.on('secureConnect', () => {
         console.log('Secure connection established');
         console.log('TLS protocol version:', socket.getProtocol());
