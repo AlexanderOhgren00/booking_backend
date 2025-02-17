@@ -845,38 +845,50 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
 });
 
 router.post("/swish/payment/:instructionUUID", async (req, res) => {
-  const { instructionUUID } = req.params; // Get instructionUUID from params
-  const { payeeAlias, amount, currency, callbackUrl } = req.body; // Get payment data from request body
+  const { instructionUUID } = req.params;
+  const { payeeAlias, amount, currency, callbackUrl } = req.body;
 
-  const agent = new https.Agent({
-    pfx: fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12')),
-    passphrase: 'swish',
-    ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), { encoding: 'utf8' }),
-  });
-
-  const paymentRequest = {
-    payeeAlias: payeeAlias,
-    currency: currency,
-    callbackUrl: callbackUrl,
-    amount: amount,
-    message: "payment for booking",
-    callbackIdentifier: '11A86BE70EA346E4B1C39C874173F478',
-  };
+  // Validate required fields
+  if (!payeeAlias || !amount || !currency) {
+    return res.status(400).json({ 
+      error: "Missing required fields",
+      details: "payeeAlias, amount, and currency are required"
+    });
+  }
 
   try {
+    const agent = new https.Agent({
+      pfx: fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12')),
+      passphrase: 'swish',
+      ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), { encoding: 'utf8' }),
+    });
+
+    const paymentRequest = {
+      payeeAlias: payeeAlias,
+      currency: currency,
+      callbackUrl: callbackUrl || "https://mintbackend-0066444807ba.herokuapp.com/swish/callback",
+      amount: amount,
+      message: "RF07",
+      payerAlias: "46712345678" // Add the payer's Swish number
+    };
+
     console.log('Making Swish request:', { instructionUUID, paymentRequest });
 
-    const response = await fetch(`https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v1/paymentrequests/${instructionUUID}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(paymentRequest),
-      agent: agent
-    });
+    const response = await fetch(
+      `https://mss.cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(paymentRequest),
+        agent: agent
+      }
+    );
 
     console.log('Swish response status:', response.status);
 
+    // Handle different response statuses
     if (response.status === 201) {
       const location = response.headers.get('location');
       broadcast({
@@ -885,21 +897,33 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
         paymentId: location
       });
 
-      res.status(201).json({
+      return res.status(201).json({
         success: true,
         paymentId: location,
         paymentRequest
       });
-    } else {
-      const errorData = await response.json();
-      throw new Error(errorData.message || 'Payment initialization failed');
+    } 
+    
+    // Try to parse error response
+    let errorData;
+    try {
+      const textResponse = await response.text();
+      console.log('Raw response:', textResponse);
+      
+      errorData = textResponse ? JSON.parse(textResponse) : { message: 'Unknown error' };
+    } catch (parseError) {
+      console.error('Error parsing response:', parseError);
+      errorData = { message: 'Invalid response from Swish' };
     }
+
+    throw new Error(errorData.message || `Payment failed with status ${response.status}`);
 
   } catch (error) {
     console.error('Swish payment error:', error);
-    res.status(500).json({ 
+    return res.status(500).json({ 
       error: "Payment initialization failed",
-      details: error.message
+      details: error.message,
+      requestId: instructionUUID
     });
   }
 });
