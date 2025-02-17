@@ -844,78 +844,70 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
   }
 });
 
-router.post("/swish/payment/:instructionUUID", async (req, res) => {
-  const { instructionUUID } = req.params;
-  const { payeeAlias, amount, currency } = req.body;
-
+router.post('/swish/payment/:instructionUUID', async (req, res) => {
   try {
-    // Configure HTTPS agent with required certificates
-    const agent = new https.Agent({
-      pfx: fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12')),
+    const { instructionUUID } = req.params;
+    
+    // Read certificate files
+    const certificate = fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12'));
+    const caCert = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'));
+    
+    // Create HTTPS agent with certificates
+    const httpsAgent = new https.Agent({
+      pfx: certificate,
       passphrase: 'swish',
-      ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem')),
+      ca: caCert,
       minVersion: 'TLSv1.2'
     });
-
-    const paymentRequest = {
-      payeePaymentReference: "0123456789",
-      callbackUrl: "https://mintbackend-0066444807ba.herokuapp.com/swish/callback",
-      callbackIdentifier: "D0194DE14DFC448D9A2F701567547600",
-      payerAlias: "4671234768",
-      payeeAlias: "1231181189",
-      amount: "100",
-      currency: "SEK",
-      message: "Kingston USB Flash Drive 8 GB"
-    };
-
-    console.log('Making Swish request:', { instructionUUID, paymentRequest });
-
-    const response = await fetch(
-      `https://mss.cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
-      {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(paymentRequest),
-        agent: agent,
-        cert: fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12')),
-        certType: 'p12',
-        ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem')),
-        minVersion: 'TLSv1.2'
-      }
-    );
-
-    console.log('Swish response status:', response.status);
-
-    if (response.status === 201) {
-      const location = response.headers.get('location');
-      broadcast({
-        type: 'swishPayment',
-        status: 'created',
-        paymentId: location
-      });
-
-      return res.status(201).json({
-        success: true,
-        paymentId: location,
-        paymentRequest
-      });
-    } 
-
-    // Handle error response
-    const textResponse = await response.text();
-    console.log('Raw response:', textResponse);
     
-    const errorData = textResponse ? JSON.parse(textResponse) : { message: 'Unknown error' };
-    throw new Error(errorData.message || `Payment failed with status ${response.status}`);
-
+    // Get payment details from the request body
+    const { 
+      payeePaymentReference = '0123456789',
+      callbackUrl = 'https://myfakehost.se/swishcallback.cfm',
+      payerAlias = '4671234768',
+      payeeAlias = '1231181189',
+      amount = '100',
+      currency = 'SEK',
+      message = 'Kingston USB Flash Drive 8 GB'
+    } = req.body;
+    
+    // Create payment data object
+    const paymentData = {
+      payeePaymentReference,
+      callbackUrl,
+      callbackIdentifier: instructionUUID,  // Using the route parameter as callbackIdentifier
+      payerAlias,
+      payeeAlias,
+      amount,
+      currency,
+      message
+    };
+    
+    // Make the request to Swish API
+    const response = await fetch('https://mss.cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(paymentData),
+      agent: httpsAgent
+    });
+    
+    // Get response data
+    const data = await response.json();
+    
+    // Return the Swish API response to the client
+    res.status(response.status).json({
+      status: response.status,
+      data,
+      instructionUUID
+    });
+    
   } catch (error) {
-    console.error('Swish payment error:', error);
-    return res.status(500).json({ 
-      error: "Payment initialization failed",
-      details: error.message,
-      requestId: instructionUUID
+    console.error('Error processing Swish payment:', error);
+    res.status(500).json({
+      error: 'Failed to process payment request',
+      message: error.message
     });
   }
 });
