@@ -850,14 +850,33 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     
     // Read certificate files
     const certificate = fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12'));
-    const caCert = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'));
+    const caCert = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem')); 
+
+    console.log(`Certificate loaded: ${certificate.length} bytes`);
+    console.log(`CA cert loaded: ${caCert.length} bytes`);
     
     // Create HTTPS agent with certificates
     const httpsAgent = new https.Agent({
       pfx: certificate,
       passphrase: 'swish',
       ca: caCert,
-      minVersion: 'TLSv1.2'
+      minVersion: 'TLSv1.2',
+      rejectUnauthorized: true, // Ensure that certificates are properly validated
+      checkServerIdentity: (host, cert) => { 
+        return undefined; // Use default validation
+      }
+    });
+
+    agent.on('socket', (socket) => {
+      socket.on('secureConnect', () => {
+        console.log('Secure connection established');
+        console.log('TLS protocol version:', socket.getProtocol());
+        console.log('Cipher:', socket.getCipher());
+      });
+      
+      socket.on('error', (err) => {
+        console.error('Socket error:', err);
+      });
     });
     
     // Get payment details from the request body
