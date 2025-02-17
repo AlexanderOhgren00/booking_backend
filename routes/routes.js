@@ -849,8 +849,8 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
   const { payeeAlias, amount, currency, callbackUrl } = req.body; // Get payment data from request body
 
   const agent = new https.Agent({
-    cert: fs.readFileSync(join(__dirname, '../ssl/public.pem'), { encoding: 'utf8' }),
-    key: fs.readFileSync(join(__dirname, '../ssl/private.key'), { encoding: 'utf8' }),
+    pfx: fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12')),
+    passphrase: 'swish',
     ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), { encoding: 'utf8' }),
   });
 
