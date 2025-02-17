@@ -845,7 +845,6 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
 });
 
 router.post("/swish/payment/:instructionUUID", async (req, res) => {
-  // Create HTTPS agent with certificates
   const agent = new https.Agent({
     cert: fs.readFileSync(join(__dirname, '../ssl/public.pem'), { encoding: 'utf8' }),
     key: fs.readFileSync(join(__dirname, '../ssl/private.key'), { encoding: 'utf8' }),
@@ -860,51 +859,30 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
   };
 
   try {
-    const swishResponse = await new Promise((resolve, reject) => {
-      const req = https.request({
-        hostname: 'cpc.getswish.net',
-        port: 443,
-        path: `/swish-cpcapi/api/v2/paymentrequests/${req.params.instructionUUID}`,
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        agent: agent
-      }, (res) => {
-        let data = '';
-        
-        res.on('data', chunk => {
-          data += chunk;
-        });
-
-        res.on('end', () => {
-          resolve({
-            status: res.statusCode,
-            headers: res.headers,
-            data: data ? JSON.parse(data) : null
-          });
-        });
-      });
-
-      req.on('error', reject);
-      req.write(JSON.stringify(paymentRequest));
-      req.end();
+    const response = await fetch(`https://cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${req.params.instructionUUID}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(paymentRequest),
+      agent: agent
     });
 
-    if (swishResponse.status === 201) {
+    if (response.status === 201) {
       broadcast({
         type: 'swishPayment',
         status: 'created',
-        paymentId: swishResponse.headers.location
+        paymentId: response.headers.get('location')
       });
 
       res.status(201).json({
         success: true,
-        paymentId: swishResponse.headers.location,
+        paymentId: response.headers.get('location'),
         paymentRequest: paymentRequest
       });
     } else {
-      throw new Error('Payment initialization failed');
+      const errorData = await response.json();
+      throw new Error(errorData.message || 'Payment initialization failed');
     }
 
   } catch (error) {
