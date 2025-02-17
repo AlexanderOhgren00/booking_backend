@@ -860,11 +860,12 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
     const paymentRequest = {
       payeePaymentReference: "0123456789",
       callbackUrl: "https://mintbackend-0066444807ba.herokuapp.com/swish/callback",
+      callbackIdentifier: "D0194DE14DFC448D9A2F701567547600",
       payerAlias: "4671234768",
-      payeeAlias: payeeAlias,
-      amount: amount,
-      currency: currency,
-      message: "Payment for booking"
+      payeeAlias: "1231181189",
+      amount: "100",
+      currency: "SEK",
+      message: "Kingston USB Flash Drive 8 GB"
     };
 
     console.log('Making Swish request:', { instructionUUID, paymentRequest });
@@ -877,7 +878,11 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(paymentRequest),
-        agent: agent
+        agent: agent,
+        cert: fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12')),
+        certType: 'p12',
+        ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem')),
+        minVersion: 'TLSv1.2'
       }
     );
 
