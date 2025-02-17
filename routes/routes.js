@@ -846,6 +846,7 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
 
 router.post("/swish/payment/:instructionUUID", async (req, res) => {
   const { instructionUUID } = req.params; // Get instructionUUID from params
+  const { payeeAlias, amount, currency, callbackUrl } = req.body; // Get payment data from request body
 
   const agent = new https.Agent({
     cert: fs.readFileSync(join(__dirname, '../ssl/public.pem'), { encoding: 'utf8' }),
@@ -854,10 +855,10 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
   });
 
   const paymentRequest = {
-    payeeAlias: '1234679304',
-    currency: 'SEK',
-    callbackUrl: 'https://example.com/api/swishcb/paymentrequests',
-    amount: "100",
+    payeeAlias: payeeAlias,
+    currency: currency,
+    callbackUrl: callbackUrl,
+    amount: amount,
     message: "payment for booking",
     callbackIdentifier: '11A86BE70EA346E4B1C39C874173F478',
   };
