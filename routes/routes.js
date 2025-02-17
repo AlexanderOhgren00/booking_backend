@@ -859,7 +859,7 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
   };
 
   try {
-    const response = await fetch('https://cpc.getswish.net:443/swish-cpcapi/api/v2/paymentrequests/' + req.params.instructionUUID, {
+    const response = await fetch(`https://mss.cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json'
