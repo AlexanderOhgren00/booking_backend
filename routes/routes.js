@@ -899,7 +899,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     // Return the Swish API response to the client
     res.status(response.status).json({
       status: response.status,
-      location: response.headers.location,
+      paymentRequestToken:  response.headers,
       instructionUUID
     });
 
