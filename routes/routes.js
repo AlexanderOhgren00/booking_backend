@@ -862,9 +862,6 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       ca: caCert,
       minVersion: 'TLSv1.2',
       rejectUnauthorized: true, // Ensure that certificates are properly validated
-      checkServerIdentity: (host, cert) => { 
-        return undefined; // Use default validation
-      }
     });
 
     httpsAgent.on('socket', (socket) => {
@@ -903,10 +900,10 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     };
     
     // Make the request to Swish API
-    const response = await fetch('https://mss.cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests', {
-      method: 'POST',
+    const response = await fetch(`https://mss.cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`, {
+      method: 'PUT',
       headers: {
-        'Content-Type': 'application/json'
+      'Content-Type': 'application/json'
       },
       body: JSON.stringify(paymentData),
       agent: httpsAgent
