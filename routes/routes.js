@@ -866,7 +866,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     const { 
       payeePaymentReference = '0123456789',
       callbackUrl = 'https://myfakehost.se/swishcallback.cfm',
-      payerAlias = '4671234768',
+      //payerAlias = '4671234768',
       payeeAlias = '1231181189',
       amount = '100',
       currency = 'SEK',
@@ -878,7 +878,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       payeePaymentReference,
       callbackUrl,
       callbackIdentifier: instructionUUID,
-      payerAlias,
+      //payerAlias,
       payeeAlias,
       amount,
       currency,
@@ -899,7 +899,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     // Return the Swish API response to the client
     res.status(response.status).json({
       status: response.status,
-      paymentRequestToken:  response.headers,
+      paymentRequestToken: response.headers,
       instructionUUID
     });
 
