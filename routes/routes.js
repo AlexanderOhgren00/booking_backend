@@ -845,8 +845,7 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
 });
 
 router.post("/swish/payment/:instructionUUID", async (req, res) => {
-
-  const instructionUUID = req.params;
+  const { instructionUUID } = req.params; // Get instructionUUID from params
 
   const agent = new https.Agent({
     cert: fs.readFileSync(join(__dirname, '../ssl/public.pem'), { encoding: 'utf8' }),
@@ -855,13 +854,17 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
   });
 
   const paymentRequest = {
-    payeeAlias: req.body.payeeAlias,
-    amount: req.body.amount,
-    currency: req.body.currency,
-    callbackUrl: req.body.callbackUrl,
+    payeeAlias: '1234679304',
+    currency: 'SEK',
+    callbackUrl: 'https://example.com/api/swishcb/paymentrequests',
+    amount: "100",
+    message: "payment for booking",
+    callbackIdentifier: '11A86BE70EA346E4B1C39C874173F478',
   };
 
   try {
+    console.log('Making Swish request:', { instructionUUID, paymentRequest });
+
     const response = await fetch(`https://mss.cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`, {
       method: 'PUT',
       headers: {
@@ -871,17 +874,20 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
       agent: agent
     });
 
+    console.log('Swish response status:', response.status);
+
     if (response.status === 201) {
+      const location = response.headers.get('location');
       broadcast({
         type: 'swishPayment',
         status: 'created',
-        paymentId: response.headers.get('location')
+        paymentId: location
       });
 
       res.status(201).json({
         success: true,
-        paymentId: response.headers.get('location'),
-        paymentRequest: paymentRequest
+        paymentId: location,
+        paymentRequest
       });
     } else {
       const errorData = await response.json();
