@@ -846,29 +846,25 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
 
 router.post("/swish/payment/:instructionUUID", async (req, res) => {
   const { instructionUUID } = req.params;
-  const { payeeAlias, amount, currency, callbackUrl } = req.body;
-
-  // Validate required fields
-  if (!payeeAlias || !amount || !currency) {
-    return res.status(400).json({ 
-      error: "Missing required fields",
-      details: "payeeAlias, amount, and currency are required"
-    });
-  }
+  const { payeeAlias, amount, currency } = req.body;
 
   try {
+    // Configure HTTPS agent with required certificates
     const agent = new https.Agent({
       pfx: fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12')),
       passphrase: 'swish',
+      ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem')),
+      minVersion: 'TLSv1.2'
     });
 
     const paymentRequest = {
-      payeeAlias: payeeAlias,
-      currency: currency,
-      callbackUrl: callbackUrl || "https://mintbackend-0066444807ba.herokuapp.com/swish/callback",
+      payeePaymentReference: "0123456789",
+      callbackUrl: "https://mintbackend-0066444807ba.herokuapp.com/swish/callback",
+      payerAlias: "4671234768",
+      payeeAlias: "1234679304",
       amount: amount,
-      message: "hello",
-      payerAlias: "46712345678" // Add the payer's Swish number
+      currency: "SEK",
+      message: "Payment for booking"
     };
 
     console.log('Making Swish request:', { instructionUUID, paymentRequest });
@@ -887,7 +883,6 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
 
     console.log('Swish response status:', response.status);
 
-    // Handle different response statuses
     if (response.status === 201) {
       const location = response.headers.get('location');
       broadcast({
@@ -902,19 +897,12 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
         paymentRequest
       });
     } 
-    
-    // Try to parse error response
-    let errorData;
-    try {
-      const textResponse = await response.text();
-      console.log('Raw response:', textResponse);
-      
-      errorData = textResponse ? JSON.parse(textResponse) : { message: 'Unknown error' };
-    } catch (parseError) {
-      console.error('Error parsing response:', parseError);
-      errorData = { message: 'Invalid response from Swish' };
-    }
 
+    // Handle error response
+    const textResponse = await response.text();
+    console.log('Raw response:', textResponse);
+    
+    const errorData = textResponse ? JSON.parse(textResponse) : { message: 'Unknown error' };
     throw new Error(errorData.message || `Payment failed with status ${response.status}`);
 
   } catch (error) {
