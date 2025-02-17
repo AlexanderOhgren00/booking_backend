@@ -860,7 +860,6 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
     const agent = new https.Agent({
       pfx: fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12')),
       passphrase: 'swish',
-      ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), { encoding: 'utf8' }),
     });
 
     const paymentRequest = {
@@ -868,7 +867,7 @@ router.post("/swish/payment/:instructionUUID", async (req, res) => {
       currency: currency,
       callbackUrl: callbackUrl || "https://mintbackend-0066444807ba.herokuapp.com/swish/callback",
       amount: amount,
-      message: "RF07",
+      message: "hello",
       payerAlias: "46712345678" // Add the payer's Swish number
     };
 
