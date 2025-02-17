@@ -9,6 +9,7 @@ import fs from 'fs';
 import https from 'https';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import axios from 'axios';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -852,30 +853,15 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     const certificate = fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12'));
     const caCert = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem')); 
 
-    console.log(`Certificate loaded: ${certificate.length} bytes`);
-    console.log(`CA cert loaded: ${caCert.length} bytes`);
-    
     // Create HTTPS agent with certificates
     const httpsAgent = new https.Agent({
       pfx: certificate,
       passphrase: 'swish',
       ca: caCert,
       minVersion: 'TLSv1.2',
-      rejectUnauthorized: true, // Ensure that certificates are properly validated
+      rejectUnauthorized: true
     });
 
-    httpsAgent.on('socket', (socket) => {
-      socket.on('secureConnect', () => {
-        console.log('Secure connection established');
-        console.log('TLS protocol version:', socket.getProtocol());
-        console.log('Cipher:', socket.getCipher());
-      });
-      
-      socket.on('error', (err) => {
-        console.error('Socket error:', err);
-      });
-    });
-    
     // Get payment details from the request body
     const { 
       payeePaymentReference = '0123456789',
@@ -891,40 +877,54 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     const paymentData = {
       payeePaymentReference,
       callbackUrl,
-      callbackIdentifier: instructionUUID,  // Using the route parameter as callbackIdentifier
+      callbackIdentifier: instructionUUID,
       payerAlias,
       payeeAlias,
       amount,
       currency,
       message
     };
-    
-    // Make the request to Swish API
-    const response = await fetch(`https://mss.cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`, {
-      method: 'PUT',
+
+    // Make request using axios
+    const response = await axios({
+      method: 'put',
+      url: `https://mss.cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
       headers: {
-      'Content-Type': 'application/json'
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify(paymentData),
-      agent: httpsAgent
+      data: paymentData,
+      httpsAgent: httpsAgent
     });
-    
-    // Get response data
-    const data = await response.json();
-    
+
     // Return the Swish API response to the client
     res.status(response.status).json({
       status: response.status,
-      data,
+      data: response.data,
       instructionUUID
     });
-    
+
   } catch (error) {
     console.error('Error processing Swish payment:', error);
-    res.status(500).json({
-      error: 'Failed to process payment request',
-      message: error.message
-    });
+    if (error.response) {
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      res.status(error.response.status).json({
+        error: 'Swish API error',
+        message: error.response.data
+      });
+    } else if (error.request) {
+      // The request was made but no response was received
+      res.status(500).json({
+        error: 'No response from Swish API',
+        message: 'The request was made but no response was received'
+      });
+    } else {
+      // Something happened in setting up the request
+      res.status(500).json({
+        error: 'Request setup error',
+        message: error.message
+      });
+    }
   }
 });
 
