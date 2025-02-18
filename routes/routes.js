@@ -712,42 +712,34 @@ router.patch("/changeTime", async (req, res) => {
   const { year, month, day, category, oldTime, newTime } = req.body;
 
   try {
-    let collections = db.collection("years");
-
-    // First check if time slot exists
-    const existingDoc = await collections.findOne({
-      "year": year,
-      "months.month": month,
-      "months.days.day": day,
-      "months.days.categories.name": category,
-      "months.days.categories.times.time": oldTime
+    const collections = db.collection("bookings");
+    
+    // Check if the old time slot exists
+    const oldTimeSlot = await collections.findOne({
+      timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`
     });
 
-    if (!existingDoc) {
+    if (!oldTimeSlot) {
       return res.status(404).json({ error: "Time slot not found" });
     }
 
+    // Check if the new time slot already exists
+    const newTimeSlot = await collections.findOne({
+      timeSlotId: `${year}-${month}-${day}-${category}-${newTime}`
+    });
+
+    if (newTimeSlot) {
+      return res.status(400).json({ error: "New time slot already exists" });
+    }
+
     // Update the time slot
-    let result = await collections.updateOne(
-      {
-        "year": year,
-        "months.month": month,
-        "months.days.day": day,
-        "months.days.categories.name": category,
-        "months.days.categories.times.time": oldTime
-      },
+    const result = await collections.updateOne(
+      { timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}` },
       {
         $set: {
-          "months.$[month].days.$[day].categories.$[category].times.$[time].time": newTime
+          time: newTime,
+          timeSlotId: `${year}-${month}-${day}-${category}-${newTime}`
         }
-      },
-      {
-        arrayFilters: [
-          { "month.month": month },
-          { "day.day": day },
-          { "category.name": category },
-          { "time.time": oldTime }
-        ]
       }
     );
 
@@ -761,7 +753,12 @@ router.patch("/changeTime", async (req, res) => {
       data: { year, month, day, category, oldTime, newTime }
     });
 
-    res.json({ message: "Time updated successfully", result });
+    res.json({ 
+      message: "Time updated successfully", 
+      oldTimeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
+      newTimeSlotId: `${year}-${month}-${day}-${category}-${newTime}`,
+      result 
+    });
 
   } catch (error) {
     console.error(error);
