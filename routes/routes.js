@@ -774,38 +774,54 @@ router.patch("/bulkChangeTime", async (req, res) => {
   }
 
   try {
-    const collections = db.collection("years");
+    const collections = db.collection("bookings");
     const results = [];
 
     for (const update of updates) {
       const { year, month, day, category, oldTime, newTime } = update;
 
+      // First check if the old time slot exists
+      const oldTimeSlot = await collections.findOne({
+        timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`
+      });
+
+      if (!oldTimeSlot) {
+        results.push({
+          timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
+          success: false,
+          error: "Original time slot not found"
+        });
+        continue;
+      }
+
+      // Check if the new time slot already exists
+      const newTimeSlot = await collections.findOne({
+        timeSlotId: `${year}-${month}-${day}-${category}-${newTime}`
+      });
+
+      if (newTimeSlot) {
+        results.push({
+          timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
+          success: false,
+          error: "New time slot already exists"
+        });
+        continue;
+      }
+
+      // Update the time slot
       const result = await collections.updateOne(
-        {
-          "year": year,
-          "months.month": month,
-          "months.days.day": day,
-          "months.days.categories.name": category,
-          "months.days.categories.times.time": oldTime
-        },
+        { timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}` },
         {
           $set: {
-            "months.$[month].days.$[day].categories.$[category].times.$[time].time": newTime
+            time: newTime,
+            timeSlotId: `${year}-${month}-${day}-${category}-${newTime}`
           }
-        },
-        {
-          arrayFilters: [
-            { "month.month": month },
-            { "day.day": day },
-            { "category.name": category },
-            { "time.time": oldTime }
-          ]
         }
       );
 
       results.push({
-        oldTime,
-        newTime,
+        oldTimeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
+        newTimeSlotId: `${year}-${month}-${day}-${category}-${newTime}`,
         success: result.modifiedCount > 0
       });
     }
@@ -818,7 +834,8 @@ router.patch("/bulkChangeTime", async (req, res) => {
 
     res.json({
       message: "Bulk time update completed",
-      results
+      results,
+      modifiedCount: results.filter(r => r.success).length
     });
 
   } catch (error) {
