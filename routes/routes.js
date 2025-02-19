@@ -844,6 +844,51 @@ router.patch("/bulkChangeTime", async (req, res) => {
   }
 });
 
+router.patch("/singleRoomDiscount", async (req, res) => {
+  const { year, month, category, time, discount } = req.body;
+
+  if (!year || !month || !category || !time || discount === undefined) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  try {
+    const collections = db.collection("bookings");
+    const results = [];
+
+    // Update all matching time slots
+    const result = await collections.updateMany(
+      { 
+        year: parseInt(year),
+        month: month,
+        category: category,
+        time: time,
+        available: true // Only update if available is true
+      },
+      { 
+        $set: { 
+          discount: discount 
+        }
+      }
+    );
+
+    // Broadcast the update via WebSocket
+    broadcast({
+      type: "singleDiscountUpdate",
+      data: { year, month, category, time, discount }
+    });
+
+    res.json({
+      message: "Single time discount update completed",
+      modifiedCount: result.modifiedCount,
+      timeSlotPattern: `${year}-${month}-*-${category}-${time}`
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error while updating discount" });
+  }
+});
+
 // Get all bookings for a specific day
 router.get("/bookings/:year/:month/:day", async (req, res) => {
   const { year, month, day } = req.params;
