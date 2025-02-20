@@ -987,6 +987,51 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
   }
 });
 
+router.get("/search/bookings", async (req, res) => {
+  const { searchTerm } = req.query;
+
+  if (!searchTerm) {
+    return res.status(400).json({ error: "Search term is required" });
+  }
+
+  try {
+    const collections = db.collection("bookings");
+    
+    // Create case-insensitive search with index
+    const result = await collections.find({
+      bookedBy: { 
+        $regex: searchTerm, 
+        $options: 'i' // case-insensitive
+      },
+      available: false // Only search booked slots
+    })
+    .project({
+      year: 1,
+      month: 1,
+      day: 1,
+      time: 1,
+      category: 1,
+      bookedBy: 1,
+      email: 1,
+      number: 1,
+      timeSlotId: 1,
+      _id: 1
+    })
+    .sort({ year: 1, month: 1, day: 1, time: 1 })
+    .limit(20)
+    .toArray();
+
+    res.json({
+      results: result,
+      count: result.length
+    });
+
+  } catch (error) {
+    console.error('Search error:', error);
+    res.status(500).json({ error: "Error performing search" });
+  }
+});
+
 export default router;
 
 // const order = {
