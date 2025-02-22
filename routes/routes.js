@@ -461,6 +461,12 @@ router.get("/roomDiscounts", async (req, res) => {
   try {
     const discounts = await db.collection("roomDiscounts").find({}).toArray();
     res.json(discounts);
+
+    broadcast({
+      type: "updateRoomDiscounts",
+      message: "Update",
+    });
+    
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
@@ -478,10 +484,10 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
     const collections = db.collection("bookings");
     const results = [];
     const currentYear = new Date().getFullYear();
-    
+
     // Get all years from current year up to 2030
     const years = Array.from(
-      { length: 2030 - currentYear + 1 }, 
+      { length: 2030 - currentYear + 1 },
       (_, i) => currentYear + i
     );
 
@@ -492,14 +498,14 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
       for (const year of years) {
         // Get the number of days in this month
         const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
-        
+
         // Check each day in the month
         for (let day = 1; day <= daysInMonth; day++) {
           // Check if this day matches the selected weekday
           const currentDate = new Date(year, MONTHS.indexOf(month), day);
           if (currentDate.getDay() === weekday) {
             const result = await collections.updateOne(
-              { 
+              {
                 year: year,
                 month: month,
                 day: day,
@@ -507,9 +513,9 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
                 time: time,
                 available: true // Only update if available is true
               },
-              { 
-                $set: { 
-                  discount: discount 
+              {
+                $set: {
+                  discount: discount
                 }
               }
             );
@@ -713,7 +719,7 @@ router.patch("/changeTime", async (req, res) => {
 
   try {
     const collections = db.collection("bookings");
-    
+
     // Check if the old time slot exists
     const oldTimeSlot = await collections.findOne({
       timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`
@@ -753,11 +759,11 @@ router.patch("/changeTime", async (req, res) => {
       data: { year, month, day, category, oldTime, newTime }
     });
 
-    res.json({ 
-      message: "Time updated successfully", 
+    res.json({
+      message: "Time updated successfully",
       oldTimeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
       newTimeSlotId: `${year}-${month}-${day}-${category}-${newTime}`,
-      result 
+      result
     });
 
   } catch (error) {
@@ -857,16 +863,16 @@ router.patch("/singleRoomDiscount", async (req, res) => {
 
     // Update all matching time slots
     const result = await collections.updateMany(
-      { 
+      {
         year: parseInt(year),
         month: month,
         category: category,
         time: time,
         available: true // Only update if available is true
       },
-      { 
-        $set: { 
-          discount: discount 
+      {
+        $set: {
+          discount: discount
         }
       }
     );
@@ -907,10 +913,10 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
 router.post('/swish/payment/:instructionUUID', async (req, res) => {
   try {
     const { instructionUUID } = req.params;
-    
+
     // Read certificate files
     const certificate = fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12'));
-    const caCert = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem')); 
+    const caCert = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'));
 
     // Create HTTPS agent with certificates
     const httpsAgent = new https.Agent({
@@ -922,7 +928,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     });
 
     // Get payment details from the request body
-    const { 
+    const {
       payeePaymentReference = '0123456789',
       callbackUrl = 'https://myfakehost.se/swishcallback.cfm',
       //payerAlias = '4671234768',
@@ -931,7 +937,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       currency = 'SEK',
       message = 'Kingston USB Flash Drive 8 GB'
     } = req.body;
-    
+
     // Create payment data object
     const paymentData = {
       payeePaymentReference,
@@ -996,30 +1002,30 @@ router.get("/search/bookings", async (req, res) => {
 
   try {
     const collections = db.collection("bookings");
-    
+
     // Create case-insensitive search with index
     const result = await collections.find({
-      bookedBy: { 
-        $regex: searchTerm, 
+      bookedBy: {
+        $regex: searchTerm,
         $options: 'i' // case-insensitive
       },
       available: false // Only search booked slots
     })
-    .project({
-      year: 1,
-      month: 1,
-      day: 1,
-      time: 1,
-      category: 1,
-      bookedBy: 1,
-      email: 1,
-      number: 1,
-      timeSlotId: 1,
-      _id: 1
-    })
-    .sort({ year: 1, month: 1, day: 1, time: 1 })
-    .limit(20)
-    .toArray();
+      .project({
+        year: 1,
+        month: 1,
+        day: 1,
+        time: 1,
+        category: 1,
+        bookedBy: 1,
+        email: 1,
+        number: 1,
+        timeSlotId: 1,
+        _id: 1
+      })
+      .sort({ year: 1, month: 1, day: 1, time: 1 })
+      .limit(20)
+      .toArray();
 
     res.json({
       results: result,
