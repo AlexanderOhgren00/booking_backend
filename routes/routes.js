@@ -943,7 +943,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
 
     const response = await axios({
       method: 'put',
-      url: `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
+      url: `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v1/paymentrequests/${instructionUUID}`,
       headers: {
         'Content-Type': 'application/json'
       },
