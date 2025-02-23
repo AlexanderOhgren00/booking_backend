@@ -914,72 +914,82 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
   try {
     const { instructionUUID } = req.params;
 
-    // Read certificate files with proper encoding
+    // Read certificate files
     const certificate = fs.readFileSync(join(__dirname, '../ssl/myCertificate.p12'));
-    const caCert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
+    const caCert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'));
 
-    // Create HTTPS agent with modified certificate settings
+    // Create HTTPS agent with certificates
     const httpsAgent = new https.Agent({
       pfx: certificate,
       passphrase: 'swish',
-      ca: [caCert],
-      rejectUnauthorized: true,
+      ca: caCert,
       minVersion: 'TLSv1.2',
-      checkServerIdentity: () => undefined // Skip hostname verification
+      rejectUnauthorized: true
     });
 
+    // Get payment details from the request body
+    const {
+      payeePaymentReference = '0123456789',
+      callbackUrl = 'https://myfakehost.se/swishcallback.cfm',
+      payerAlias = '46769484400',
+      payeeAlias = '1231181189',
+      amount = '100',
+      currency = 'SEK',
+      message = 'Kingston USB Flash Drive 8 GB'
+    } = req.body;
+
+    // Create payment data object
     const paymentData = {
-      payeePaymentReference: instructionUUID,
-      callbackUrl: process.env.SWISH_CALLBACK_URL || 'https://mintbackend-0066444807ba.herokuapp.com/swish/callback',
-      payerAlias: req.body.phoneNumber || '46769484400',
-      payeeAlias: process.env.SWISH_NUMBER || '1231181189',
-      amount: req.body.amount || '100',
-      currency: 'SEK',
-      message: req.body.message || 'Payment'
+      payeePaymentReference,
+      callbackUrl,
+      callbackIdentifier: instructionUUID,
+      payerAlias,
+      payeeAlias,
+      amount,
+      currency,
+      message
     };
 
-    console.log('Making Swish request:', { instructionUUID, paymentData });
-
+    // Make request using axios
     const response = await axios({
       method: 'put',
-      url: `https://mss.cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
+      url: `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
       headers: {
         'Content-Type': 'application/json'
       },
       data: paymentData,
-      httpsAgent,
-      validateStatus: false // Don't throw on non-2xx responses
+      httpsAgent: httpsAgent
     });
 
-    console.log('Swish response:', {
-      status: response.status,
-      headers: response.headers,
-      data: response.data
-    });
-
+    // Return the Swish API response to the client
     res.status(response.status).json({
       status: response.status,
-      paymentRequestToken: response.headers.location,
+      paymentRequestToken: response.headers,
       instructionUUID
     });
 
   } catch (error) {
     console.error('Error processing Swish payment:', error);
-    
-    // Detailed error logging
     if (error.response) {
-      console.error('Response error:', {
-        status: error.response.status,
-        data: error.response.data,
-        headers: error.response.headers
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      res.status(error.response.status).json({
+        error: 'Swish API error',
+        message: error.response.data
+      });
+    } else if (error.request) {
+      // The request was made but no response was received
+      res.status(500).json({
+        error: 'No response from Swish API',
+        message: 'The request was made but no response was received'
+      });
+    } else {
+      // Something happened in setting up the request
+      res.status(500).json({
+        error: 'Request setup error',
+        message: error.message
       });
     }
-
-    res.status(500).json({
-      error: 'Swish payment failed',
-      details: error.message,
-      code: error.code
-    });
   }
 });
 
