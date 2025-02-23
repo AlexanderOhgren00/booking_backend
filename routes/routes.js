@@ -924,7 +924,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       passphrase: 'swish',
       ca: caCert,
       minVersion: 'TLSv1.2',
-      rejectUnauthorized: true
+      rejectUnauthorized: false
     });
 
     // Get payment details from the request body
