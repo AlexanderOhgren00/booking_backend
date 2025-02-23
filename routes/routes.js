@@ -965,8 +965,12 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     // For QR code payments, make an additional request to get payment status
     if (!isMobile && response.status === 201) {
       try {
-        const statusResponse = await client.get(
-          `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
+        const statusResponse = await client.post(
+          `https://staging.getswish.pub.tds.tieto.com/qrg-swish/api/v1/commerce`,
+          {
+            token: response.headers.location,
+            format: "svg",
+          },
           {
             headers: {
               'Content-Type': 'application/json'
