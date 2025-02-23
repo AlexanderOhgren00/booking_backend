@@ -913,53 +913,100 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
 router.post('/swish/payment/:instructionUUID', async (req, res) => {
   try {
     const { instructionUUID } = req.params;
+    console.log('Starting Swish payment process for UUID:', instructionUUID);
 
-    // Create HTTPS agent exactly as shown in documentation
-    const httpsAgent = new https.Agent({
-      cert: fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), { encoding: 'utf8' }),
-      key: fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), { encoding: 'utf8' }),
-      ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), { encoding: 'utf8' }),
-      rejectUnauthorized: false
+    // Log certificate loading
+    console.log('Reading certificates from:', {
+      certPath: join(__dirname, '../ssl/myCertificate.pem'),
+      keyPath: join(__dirname, '../ssl/PrivateKey.key'),
+      caPath: join(__dirname, '../ssl/Swish_TLS_RootCA.pem')
     });
 
-    // Create axios client with agent
-    const client = axios.create({
-      httpsAgent
-    });
+    // Create HTTPS agent with logging
+    try {
+      const cert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), { encoding: 'utf8' });
+      const key = fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), { encoding: 'utf8' });
+      const ca = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), { encoding: 'utf8' });
+      
+      console.log('Certificates loaded successfully:', {
+        certLength: cert.length,
+        keyLength: key.length,
+        caLength: ca.length
+      });
 
-    const paymentData = {
-      payeePaymentReference: instructionUUID,
-      callbackUrl: 'https://mintbackend-0066444807ba.herokuapp.com/swish/callback',
-      payerAlias: '46769484400',
-      payeeAlias: '1230606301',
-      amount: '100',
-      currency: 'SEK',
-      message: 'hej'
-    };
+      const httpsAgent = new https.Agent({
+        cert,
+        key,
+        ca,
+        rejectUnauthorized: false
+      });
 
-    console.log('Making Swish request:', { instructionUUID, paymentData });
+      console.log('HTTPS Agent created with certificates');
 
-    const response = await client.put(
-      `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
-      paymentData,
-      {
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        validateStatus: false
-      }
-    );
+      // Create axios client with agent
+      const client = axios.create({
+        httpsAgent
+      });
+      console.log('Axios client created with HTTPS agent');
 
-    res.status(response.status).json({
-      status: response.status,
-      paymentRequestToken: response.headers.location,
-      instructionUUID
-    });
+      const paymentData = {
+        payeePaymentReference: instructionUUID,
+        callbackUrl: 'https://mintbackend-0066444807ba.herokuapp.com/swish/callback',
+        payerAlias: '46769484400',
+        payeeAlias: '1230606301',
+        amount: '100',
+        currency: 'SEK',
+        message: 'hej'
+      };
+
+      console.log('Making Swish request:', {
+        url: `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
+        paymentData,
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const response = await client.put(
+        `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
+        paymentData,
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          validateStatus: false
+        }
+      );
+
+      console.log('Swish API response:', {
+        status: response.status,
+        headers: response.headers,
+        data: response.data
+      });
+
+      res.status(response.status).json({
+        status: response.status,
+        paymentRequestToken: response.headers.location,
+        instructionUUID
+      });
+
+    } catch (certError) {
+      console.error('Certificate loading error:', certError);
+      throw certError;
+    }
 
   } catch (error) {
-    console.error('Error processing Swish payment:', error);
-    
+    console.error('Error processing Swish payment:', {
+      message: error.message,
+      code: error.code,
+      stack: error.stack
+    });
+
     if (error.response) {
+      console.error('Swish API error response:', {
+        status: error.response.status,
+        data: error.response.data,
+        headers: error.response.headers
+      });
+      
       res.status(error.response.status).json({
         error: 'Swish API error',
         message: error.response.data
