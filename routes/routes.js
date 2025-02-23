@@ -919,6 +919,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       cert: fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), { encoding: 'utf8' }),
       key: fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), { encoding: 'utf8' }),
       ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), { encoding: 'utf8' }),
+      rejectUnauthorized: false
     });
 
     // Create axios client with agent
