@@ -915,13 +915,14 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     const { instructionUUID } = req.params;
 
     // Read certificate files with proper encoding
-    const certificate = fs.readFileSync(join(__dirname, '../ssl/myCertificate.p12'));
-    const caCert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
+    const certificate = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
+    const privateKey = fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), 'utf8');
+    const caCert = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), 'utf8');
 
-    // Create HTTPS agent with simplified TLS settings
+    // Create HTTPS agent with proper certificate setup
     const httpsAgent = new https.Agent({
-      pfx: certificate,
-      passphrase: 'swish',
+      cert: certificate,
+      key: privateKey,
       ca: caCert,
       minVersion: 'TLSv1.2',
       rejectUnauthorized: true,
