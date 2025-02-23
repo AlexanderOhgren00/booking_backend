@@ -915,8 +915,8 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     const { instructionUUID } = req.params;
 
     // Read certificate files
-    const certificate = fs.readFileSync(join(__dirname, '../ssl/Swish_Merchant_TestCertificate_1234679304.p12'));
-    const caCert = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'));
+    const certificate = fs.readFileSync(join(__dirname, '../ssl/myCertificate.p12'));
+    const caCert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'));
 
     // Create HTTPS agent with certificates
     const httpsAgent = new https.Agent({
@@ -931,7 +931,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     const {
       payeePaymentReference = '0123456789',
       callbackUrl = 'https://myfakehost.se/swishcallback.cfm',
-      //payerAlias = '4671234768',
+      payerAlias = '46769484400',
       payeeAlias = '1231181189',
       amount = '100',
       currency = 'SEK',
@@ -943,7 +943,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       payeePaymentReference,
       callbackUrl,
       callbackIdentifier: instructionUUID,
-      //payerAlias,
+      payerAlias,
       payeeAlias,
       amount,
       currency,
@@ -953,7 +953,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     // Make request using axios
     const response = await axios({
       method: 'put',
-      url: `https://mss.cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
+      url: `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
       headers: {
         'Content-Type': 'application/json'
       },
