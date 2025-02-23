@@ -914,16 +914,16 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
   try {
     const { instructionUUID } = req.params;
 
-    // Read certificate files with proper encoding
-    const certificate = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
-    const privateKey = fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), 'utf8');
-    const caCert = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), 'utf8');
-
-    // Create HTTPS agent with proper certificate setup
+    // Create HTTPS agent exactly as shown in documentation
     const httpsAgent = new https.Agent({
-      cert: certificate,
-      key: privateKey,
-      ca: caCert,
+      cert: fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), { encoding: 'utf8' }),
+      key: fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), { encoding: 'utf8' }),
+      ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), { encoding: 'utf8' }),
+    });
+
+    // Create axios client with agent
+    const client = axios.create({
+      httpsAgent
     });
 
     const paymentData = {
@@ -938,16 +938,16 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
 
     console.log('Making Swish request:', { instructionUUID, paymentData });
 
-    const response = await axios({
-      method: 'put',
-      url: `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      data: paymentData,
-      httpsAgent,
-      validateStatus: false
-    });
+    const response = await client.put(
+      `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
+      paymentData,
+      {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        validateStatus: false
+      }
+    );
 
     res.status(response.status).json({
       status: response.status,
