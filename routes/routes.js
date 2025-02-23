@@ -924,9 +924,6 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       cert: certificate,
       key: privateKey,
       ca: caCert,
-      minVersion: 'TLSv1.2',
-      rejectUnauthorized: true,
-      ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384'
     });
 
     const paymentData = {
@@ -943,7 +940,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
 
     const response = await axios({
       method: 'put',
-      url: `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v1/paymentrequests/${instructionUUID}`,
+      url: `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
       headers: {
         'Content-Type': 'application/json'
       },
