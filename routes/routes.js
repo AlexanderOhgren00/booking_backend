@@ -1070,7 +1070,8 @@ router.get("/stats/monthly-players/:year/:month", async (req, res) => {
         $match: {
           year: year,
           month: month,
-          available: false // Only count booked slots
+          available: false, // Only count booked slots
+          cost: { $gt: 0 }  // Only include bookings with cost
         }
       },
       {
@@ -1081,6 +1082,7 @@ router.get("/stats/monthly-players/:year/:month", async (req, res) => {
           },
           totalPlayers: { $sum: "$players" },
           totalBookings: { $sum: 1 },
+          totalRevenue: { $sum: "$cost" }, // Add revenue calculation
           avgPerDay: { 
             $avg: "$players" 
           }
@@ -1095,13 +1097,15 @@ router.get("/stats/monthly-players/:year/:month", async (req, res) => {
               time: "$_id.time",
               totalPlayers: "$totalPlayers",
               totalBookings: "$totalBookings",
+              totalRevenue: "$totalRevenue", // Include revenue per category
               averagePlayersPerBooking: {
                 $round: [{ $divide: ["$totalPlayers", "$totalBookings"] }, 1]
               }
             }
           },
           monthTotal: { $sum: "$totalPlayers" },
-          monthBookings: { $sum: "$totalBookings" }
+          monthBookings: { $sum: "$totalBookings" },
+          monthRevenue: { $sum: "$totalRevenue" } // Total revenue for month
         }
       },
       {
@@ -1111,6 +1115,7 @@ router.get("/stats/monthly-players/:year/:month", async (req, res) => {
           month: month,
           totalPlayers: "$monthTotal",
           totalBookings: "$monthBookings",
+          totalRevenue: "$monthRevenue", // Include in final projection
           averagePlayersPerBooking: {
             $round: [{ $divide: ["$monthTotal", "$monthBookings"] }, 1]
           },
@@ -1125,6 +1130,7 @@ router.get("/stats/monthly-players/:year/:month", async (req, res) => {
       month,
       totalPlayers: 0,
       totalBookings: 0,
+      totalRevenue: 0,
       averagePlayersPerBooking: 0,
       categories: []
     };
@@ -1138,6 +1144,7 @@ router.get("/stats/monthly-players/:year/:month", async (req, res) => {
         time: null,
         totalPlayers: 0,
         totalBookings: 0,
+        totalRevenue: 0,
         averagePlayersPerBooking: 0
       }
     );
