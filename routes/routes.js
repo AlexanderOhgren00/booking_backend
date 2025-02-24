@@ -1157,6 +1157,81 @@ router.get("/stats/monthly-players/:year/:month", async (req, res) => {
   }
 });
 
+router.get("/stats/daily-revenue/:year/:month", async (req, res) => {
+  try {
+    const year = parseInt(req.params.year);
+    const month = req.params.month;
+    const collections = db.collection("bookings");
+
+    // Aggregate pipeline for daily revenue
+    const dailyStats = await collections.aggregate([
+      {
+        $match: {
+          year: year,
+          month: month,
+          available: false, // Only count booked slots
+          cost: { $gt: 0 }  // Only include bookings with cost
+        }
+      },
+      {
+        $group: {
+          _id: {
+            day: "$day"
+          },
+          totalRevenue: { $sum: "$cost" },
+          totalBookings: { $sum: 1 },
+          categories: {
+            $push: {
+              category: "$category",
+              time: "$time",
+              cost: "$cost",
+              players: "$players"
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          day: "$_id.day",
+          totalRevenue: 1,
+          totalBookings: 1,
+          categories: 1
+        }
+      },
+      {
+        $sort: { day: 1 }
+      }
+    ]).toArray();
+
+    // Get days in month
+    const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
+
+    // Create array with all days, fill with zeros for days without bookings
+    const allDays = Array.from({ length: daysInMonth }, (_, i) => {
+      const existingDay = dailyStats.find(stat => stat.day === i + 1);
+      return existingDay || {
+        day: i + 1,
+        totalRevenue: 0,
+        totalBookings: 0,
+        categories: []
+      };
+    });
+
+    res.json({
+      year,
+      month,
+      days: allDays,
+      monthlyTotal: allDays.reduce((sum, day) => sum + day.totalRevenue, 0),
+      totalBookings: allDays.reduce((sum, day) => sum + day.totalBookings, 0)
+    });
+
+  } catch (error) {
+    console.error('Error calculating daily revenue:', error);
+    res.status(500).json({ error: "Error calculating daily statistics" });
+  }
+});
+
 export default router;
 
 // const order = {
