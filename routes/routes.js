@@ -923,6 +923,11 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       rejectUnauthorized: false
     });
 
+    // Set payerAlias only if it's not a mobile payment
+    if (!isMobile && payerAlias) {
+      paymentData.payerAlias = payerAlias;
+    }
+
     const client = axios.create({ httpsAgent });
 
     // Base payment data
