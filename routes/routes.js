@@ -907,72 +907,72 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
 
 router.post("/swish/callback", async (req, res) => {
   try {
-    // Log everything from the callback
-    console.log('Swish callback received:', {
-      body: req.body,
-      headers: req.headers,
-      method: req.method,
-      url: req.url,
-      timestamp: new Date().toISOString()
-    });
-
     const { 
       id,
+      payeePaymentReference,
       paymentReference,
       status,
       amount,
-      currency,
       datePaid,
-      payerAlias,
-      payerPaymentReference,
-      payeeAlias,
-      payeePaymentReference,
-      errorCode,
-      errorMessage
+      message,
+      payerAlias
     } = req.body;
 
-    console.log('Swish callback details:', {
-      id,
-      paymentReference,
-      status,
-      amount,
-      currency,
-      datePaid,
-      payerAlias,
-      payerPaymentReference,
-      payeeAlias,
-      payeePaymentReference,
-      errorCode,
-      errorMessage
-    });
+    console.log('Swish callback received:', req.body);
 
     if (status === 'PAID') {
-      console.log('Payment successful:', {
-        id,
-        amount,
-        datePaid,
-        payerAlias
-      });
-    } else if (status === 'FAILED') {
-      console.error('Payment failed:', {
-        id,
-        errorCode,
-        errorMessage,
-        paymentReference
-      });
+      try {
+        const collections = db.collection("bookings");
+        
+        // Extract booking details from new message format
+        const bookingMatches = message.match(/([^(]+)\s*\((\d{4})-([^-]+)-(\d+)\s+(\d{2}:\d{2}),\s*Spelare:\s*(\d+),\s*Bokat\s*av:\s*([^)]+)\)/g);
+        
+        if (bookingMatches) {
+          for (const match of bookingMatches) {
+            const [_, category, year, month, day, time, players, bookedBy] = 
+              match.match(/([^(]+)\s*\((\d{4})-([^-]+)-(\d+)\s+(\d{2}:\d{2}),\s*Spelare:\s*(\d+),\s*Bokat\s*av:\s*([^)]+)\)/);
+
+            // Update each booking
+            await collections.updateOne(
+              { 
+                timeSlotId: `${year}-${month.trim()}-${day}-${category.trim()}-${time}`
+              },
+              {
+                $set: {
+                  bookedBy: bookedBy.trim(),
+                  players: parseInt(players),
+                  available: false,
+                  payed: "Swish",
+                  paymentId: id,
+                  number: payerAlias,
+                  cost: parseInt(amount),
+                }
+              }
+            );
+          }
+
+          // Broadcast update
+          broadcast({
+            type: "paymentComplete",
+            paymentReference,
+            status: "success",
+            message: "Payment completed successfully"
+          });
+        }
+      } catch (dbError) {
+        console.error('Error updating bookings:', dbError);
+      }
     }
 
+    // Always return 200 OK to Swish
     res.status(200).json({ 
       message: 'Callback received',
       receivedData: req.body
     });
 
   } catch (error) {
-    console.error('Swish callback error:', {
-      error: error.message,
-      stack: error.stack,
-      timestamp: new Date().toISOString()
-    });
+    console.error('Swish callback error:', error);
+    // Still return 200 to acknowledge receipt
     res.status(200).json({ 
       error: 'Callback processing error',
       errorDetails: error.message
