@@ -936,11 +936,6 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       payerAlias: undefined
     };
 
-    // Add payerAlias only for QR code payments
-    if (!isMobile) {
-      paymentData.payerAlias = payerAlias;
-    }
-
     console.log('Making Swish request:', {
       type: isMobile ? 'Mobile payment' : 'QR code payment',
       paymentData
