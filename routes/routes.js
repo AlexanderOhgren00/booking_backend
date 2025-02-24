@@ -1009,6 +1009,90 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
   }
 });
 
+router.post('/swish/callback', async (req, res) => {
+  try {
+    const {
+      paymentReference,    // The instructionUUID
+      status,             // PAID, DECLINED, ERROR, or CANCELLED
+      amount,             // Payment amount
+      payerAlias,         // Payer's phone number
+      payeeAlias,         // Merchant's Swish number
+      dateCreated,        // When payment was initiated
+      datePaid,           // When payment was completed
+      errorCode,          // Error code if status is ERROR
+      errorMessage        // Error message if status is ERROR
+    } = req.body;
+
+    console.log('Swish callback received:', req.body);
+
+    // Handle different payment statuses
+    switch (status) {
+      case 'PAID':
+        // Update booking with payment confirmation
+        await db.collection("bookings").updateOne(
+          { "paymentId": paymentReference },
+          { 
+            $set: { 
+              "payed": true,
+              "paymentStatus": status,
+              "paymentDate": datePaid
+            } 
+          }
+        );
+
+        // Broadcast payment success
+        broadcast({
+          type: "paymentUpdate",
+          status: "success",
+          paymentReference,
+          amount,
+          datePaid
+        });
+        break;
+
+      case 'ERROR':
+      case 'DECLINED':
+      case 'CANCELLED':
+        // Update booking to show payment failed
+        await db.collection("bookings").updateOne(
+          { "paymentId": paymentReference },
+          { 
+            $set: { 
+              "payed": false,
+              "paymentStatus": status,
+              "paymentError": errorMessage || 'Payment not completed'
+            } 
+          }
+        );
+
+        // Broadcast payment failure
+        broadcast({
+          type: "paymentUpdate",
+          status: "failed",
+          paymentReference,
+          errorCode,
+          errorMessage
+        });
+        break;
+    }
+
+    // Always respond with 200 OK to acknowledge receipt
+    res.status(200).json({ 
+      message: 'Callback processed',
+      status,
+      paymentReference 
+    });
+
+  } catch (error) {
+    console.error('Error processing Swish callback:', error);
+    // Still return 200 to acknowledge receipt
+    res.status(200).json({ 
+      message: 'Callback received but processing failed',
+      error: error.message 
+    });
+  }
+});
+
 router.get("/search/bookings", async (req, res) => {
   const { searchTerm } = req.query;
 
