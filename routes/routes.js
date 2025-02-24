@@ -960,6 +960,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
           {
             token: response.headers.location,
             format: "svg",
+            transparent: true,
           },
           {
             headers: {
