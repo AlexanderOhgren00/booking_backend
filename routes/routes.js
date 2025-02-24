@@ -1049,6 +1049,82 @@ router.get("/search/bookings", async (req, res) => {
   }
 });
 
+router.get("/stats/monthly-players/:year/:month", async (req, res) => {
+  try {
+    const year = parseInt(req.params.year);
+    const month = req.params.month;
+    const collections = db.collection("bookings");
+
+    // Aggregate pipeline for specific month's data
+    const monthlyStats = await collections.aggregate([
+      {
+        $match: {
+          year: year,
+          month: month,
+          available: false // Only count booked slots
+        }
+      },
+      {
+        $group: {
+          _id: {
+            category: "$category",
+            time: "$time"
+          },
+          totalPlayers: { $sum: "$players" },
+          totalBookings: { $sum: 1 },
+          avgPerDay: { 
+            $avg: "$players" 
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          categories: {
+            $push: {
+              category: "$_id.category",
+              time: "$_id.time",
+              totalPlayers: "$totalPlayers",
+              totalBookings: "$totalBookings",
+              averagePlayersPerBooking: {
+                $round: [{ $divide: ["$totalPlayers", "$totalBookings"] }, 1]
+              }
+            }
+          },
+          monthTotal: { $sum: "$totalPlayers" },
+          monthBookings: { $sum: "$totalBookings" }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          year: year,
+          month: month,
+          totalPlayers: "$monthTotal",
+          totalBookings: "$monthBookings",
+          averagePlayersPerBooking: {
+            $round: [{ $divide: ["$monthTotal", "$monthBookings"] }, 1]
+          },
+          categories: 1
+        }
+      }
+    ]).toArray();
+
+    res.json(monthlyStats[0] || {
+      year,
+      month,
+      totalPlayers: 0,
+      totalBookings: 0,
+      averagePlayersPerBooking: 0,
+      categories: []
+    });
+
+  } catch (error) {
+    console.error('Error calculating monthly stats:', error);
+    res.status(500).json({ error: "Error calculating monthly statistics" });
+  }
+});
+
 export default router;
 
 // const order = {
