@@ -81,6 +81,18 @@ async function cleanUpPaymentStates() {
 
 setInterval(cleanUpPaymentStates, 300 * 1000);
 
+const sslOptions = {
+  cert: fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem')),
+  key: fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key')),
+  ca: fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem')),
+  minVersion: 'TLSv1.2'
+};
+
+const httpsServer = https.createServer(sslOptions, express());
+httpsServer.listen(443, () => {
+  console.log('HTTPS Server running on port 443 for Swish callbacks');
+});
+
 router.post("/v1/payments", async (req, res) => {
   try {
     const product = req.body;
@@ -931,7 +943,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     // Base payment data
     let paymentData = {
       payeePaymentReference: instructionUUID,
-      callbackUrl: 'https://mintbackend-0066444807ba.herokuapp.com/swish/callback',
+      callbackUrl: 'https://mintbackend.herokuapp.com:443/swish/callback', // Note the port 443
       payeeAlias: '1230606301',
       amount: amount,
       currency: 'SEK',
@@ -1004,6 +1016,61 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       message: error.message,
       code: error.code
     });
+  }
+});
+
+router.post('/swish/callback', async (req, res) => {
+  try {
+    const { 
+      id,
+      paymentReference,
+      status,
+      amount,
+      datePaid,
+      errorCode,
+      errorMessage
+    } = req.body;
+
+    console.log('Swish callback received:', req.body);
+
+    // Handle different payment statuses
+    switch (status) {
+      case 'PAID':
+        await db.collection("bookings").updateOne(
+          { paymentId: paymentReference },
+          { 
+            $set: { 
+              payed: true,
+              paymentStatus: status,
+              paymentDate: datePaid
+            } 
+          }
+        );
+        break;
+
+      case 'ERROR':
+      case 'DECLINED':
+      case 'CANCELLED':
+        await db.collection("bookings").updateOne(
+          { paymentId: paymentReference },
+          { 
+            $set: { 
+              payed: false,
+              paymentStatus: status,
+              paymentError: errorMessage || 'Payment failed'
+            } 
+          }
+        );
+        break;
+    }
+
+    // Always return 200 OK as required by Swish
+    res.status(200).json({ message: 'Callback processed' });
+
+  } catch (error) {
+    console.error('Error processing Swish callback:', error);
+    // Still return 200 to acknowledge receipt
+    res.status(200).json({ message: 'Callback received with errors' });
   }
 });
 
