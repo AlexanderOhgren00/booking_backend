@@ -924,9 +924,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     });
 
     // Set payerAlias only if it's not a mobile payment
-    if (!isMobile && payerAlias) {
-      paymentData.payerAlias = payerAlias;
-    }
+    
 
     const client = axios.create({ httpsAgent });
 
@@ -940,6 +938,10 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       message: message,
       payerAlias: undefined
     };
+
+    if (!isMobile && payerAlias) {
+      paymentData.payerAlias = payerAlias;
+    }
 
     console.log('Making Swish request:', {
       type: isMobile ? 'Mobile payment' : 'QR code payment',
