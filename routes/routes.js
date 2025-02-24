@@ -1054,6 +1054,15 @@ router.get("/stats/monthly-players/:year/:month", async (req, res) => {
     const year = parseInt(req.params.year);
     const month = req.params.month;
     const collections = db.collection("bookings");
+    
+    // Define all possible categories
+    const allCategories = [
+      "SCHOOL OF MAGIC",
+      "HAUNTED HOTEL",
+      "ARK RAIDER",
+      "SUBMARINE",
+      "JURRASIC EXPERIMENT"
+    ];
 
     // Aggregate pipeline for specific month's data
     const monthlyStats = await collections.aggregate([
@@ -1110,14 +1119,30 @@ router.get("/stats/monthly-players/:year/:month", async (req, res) => {
       }
     ]).toArray();
 
-    res.json(monthlyStats[0] || {
+    // Get the base stats or create empty object
+    let stats = monthlyStats[0] || {
       year,
       month,
       totalPlayers: 0,
       totalBookings: 0,
       averagePlayersPerBooking: 0,
       categories: []
-    });
+    };
+
+    // Ensure all categories are represented
+    const categoryStats = new Map(stats.categories.map(c => [c.category, c]));
+    
+    stats.categories = allCategories.map(category => 
+      categoryStats.get(category) || {
+        category,
+        time: null,
+        totalPlayers: 0,
+        totalBookings: 0,
+        averagePlayersPerBooking: 0
+      }
+    );
+
+    res.json(stats);
 
   } catch (error) {
     console.error('Error calculating monthly stats:', error);
