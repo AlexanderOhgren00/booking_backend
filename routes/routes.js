@@ -1034,6 +1034,18 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       }
     );
 
+    // Add detailed logging for 422 errors
+    if (response.status === 422) {
+      console.log('Validation Error Details:', {
+        status: response.status,
+        data: response.data,
+        requestData: paymentData,
+        headers: response.headers,
+        errorCode: response.data?.errorCode,
+        errorMessage: response.data?.errorMessage
+      });
+    }
+
     // For QR code payments, make an additional request to get payment status
     if (!isMobile && response.status === 201) {
       try {
@@ -1073,11 +1085,17 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error processing Swish payment:', error);
+    console.error('Error processing Swish payment:', {
+      message: error.message,
+      code: error.code,
+      response: error.response?.data,
+      status: error.response?.status
+    });
     res.status(500).json({
       error: 'Payment processing error',
       message: error.message,
-      code: error.code
+      code: error.code,
+      details: error.response?.data
     });
   }
 });
