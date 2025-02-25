@@ -699,7 +699,7 @@ router.patch("/checkout", async (req, res) => {
   const { year, month, day, category, time, ...updateData } = req.body;
   try {
     const result = await db.collection("bookings").updateOne(
-      { timeSlotId: `${year}-${month}-${day}-${category}-${time}` },
+      { timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}` },
       { $set: updateData }
     );
     res.json(result);
@@ -926,28 +926,25 @@ router.post("/swish/callback", async (req, res) => {
         
         // Parse the new message format
         // Example: "SCHOOL OF MAGIC 24/February 09:30 (+2 more)"
-        const match = message.match(/^([^0-9]+)\s*(\d+)\/(\w+)\s+(\d{2}:\d{2})(?:\s+\(\+(\d+)[^)]*\))?/);
+        const mainBookingMatch = message.match(/([^\/]+)(\d+)\/(\w+)\s+(\d{2}:\d{2})/);
         
-        if (match) {
-          const [_, category, day, month, time, additionalBookings] = match;
+        if (mainBookingMatch) {
+          const [_, category, day, month, time] = mainBookingMatch;
+          const year = new Date().getFullYear(); // Current year
           
-          // Update the main booking
+          // Update the booking in database
           await collections.updateOne(
             { 
-              category: category.trim(),
-              month: month,
-              day: parseInt(day),
-              time: time,
-              available: false
+              timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}`
             },
             {
               $set: {
+                available: false,
                 payed: "Swish",
                 paymentId: id,
-                paymentReference: paymentReference,
-                paymentDate: datePaid,
                 number: payerAlias,
                 cost: parseInt(amount),
+                bookedBy: 'Pending' // Will be updated by checkout endpoint
               }
             }
           );
@@ -960,6 +957,7 @@ router.post("/swish/callback", async (req, res) => {
             message: "Payment completed successfully",
             details: {
               category: category.trim(),
+              year: year,
               month: month,
               day: parseInt(day),
               time: time,
@@ -968,9 +966,9 @@ router.post("/swish/callback", async (req, res) => {
           });
         }
       } catch (dbError) {
-        console.error('Error updating bookings:', dbError, {
+        console.error('Error updating booking:', dbError, {
           message,
-          parseResult: message.match(/^([^0-9]+)\s*(\d+)\/(\w+)\s+(\d{2}:\d{2})(?:\s+\(\+(\d+)[^)]*\))?/)
+          parseResult: message.match(/([^\/]+)(\d+)\/(\w+)\s+(\d{2}:\d{2})/)
         });
       }
     }
