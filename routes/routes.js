@@ -924,43 +924,54 @@ router.post("/swish/callback", async (req, res) => {
       try {
         const collections = db.collection("bookings");
         
-        // Extract booking details from new message format
-        const bookingMatches = message.match(/([^(]+)\s*\((\d{4})-([^-]+)-(\d+)\s+(\d{2}:\d{2}),\s*Spelare:\s*(\d+),\s*Bokat\s*av:\s*([^)]+)\)/g);
+        // Parse the new message format
+        // Example: "SCHOOL OF MAGIC 24/February 09:30 (+2 more)"
+        const match = message.match(/^([^0-9]+)\s*(\d+)\/(\w+)\s+(\d{2}:\d{2})(?:\s+\(\+(\d+)[^)]*\))?/);
         
-        if (bookingMatches) {
-          for (const match of bookingMatches) {
-            const [_, category, year, month, day, time, players, bookedBy] = 
-              match.match(/([^(]+)\s*\((\d{4})-([^-]+)-(\d+)\s+(\d{2}:\d{2}),\s*Spelare:\s*(\d+),\s*Bokat\s*av:\s*([^)]+)\)/);
-
-            // Update each booking
-            await collections.updateOne(
-              { 
-                timeSlotId: `${year}-${month.trim()}-${day}-${category.trim()}-${time}`
-              },
-              {
-                $set: {
-                  bookedBy: bookedBy.trim(),
-                  players: parseInt(players),
-                  available: false,
-                  payed: "Swish",
-                  paymentId: id,
-                  number: payerAlias,
-                  cost: parseInt(amount),
-                }
+        if (match) {
+          const [_, category, day, month, time, additionalBookings] = match;
+          
+          // Update the main booking
+          await collections.updateOne(
+            { 
+              category: category.trim(),
+              month: month,
+              day: parseInt(day),
+              time: time,
+              available: false
+            },
+            {
+              $set: {
+                payed: "Swish",
+                paymentId: id,
+                paymentReference: paymentReference,
+                paymentDate: datePaid,
+                number: payerAlias,
+                cost: parseInt(amount),
               }
-            );
-          }
+            }
+          );
 
           // Broadcast update
           broadcast({
             type: "paymentComplete",
             paymentReference,
             status: "success",
-            message: "Payment completed successfully"
+            message: "Payment completed successfully",
+            details: {
+              category: category.trim(),
+              month: month,
+              day: parseInt(day),
+              time: time,
+              amount: parseInt(amount)
+            }
           });
         }
       } catch (dbError) {
-        console.error('Error updating bookings:', dbError);
+        console.error('Error updating bookings:', dbError, {
+          message,
+          parseResult: message.match(/^([^0-9]+)\s*(\d+)\/(\w+)\s+(\d{2}:\d{2})(?:\s+\(\+(\d+)[^)]*\))?/)
+        });
       }
     }
 
@@ -972,7 +983,6 @@ router.post("/swish/callback", async (req, res) => {
 
   } catch (error) {
     console.error('Swish callback error:', error);
-    // Still return 200 to acknowledge receipt
     res.status(200).json({ 
       error: 'Callback processing error',
       errorDetails: error.message
