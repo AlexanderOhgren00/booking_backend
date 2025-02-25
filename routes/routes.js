@@ -924,16 +924,23 @@ router.post("/swish/callback", async (req, res) => {
       try {
         const collections = db.collection("bookings");
         
-        // Parse the new message format
-        // Example: "SCHOOL OF MAGIC 24/February 09:30 (+2 more)"
-        const mainBookingMatch = message.match(/([^\/]+)(\d+)\/(\w+)\s+(\d{2}:\d{2})/);
+        // Parse message format: "SUBMARINE 26/February 21:30"
+        const mainBookingMatch = message.match(/([A-Z\s]+)\s+(\d+)\/(\w+)\s+(\d{2}:\d{2})/);
         
         if (mainBookingMatch) {
           const [_, category, day, month, time] = mainBookingMatch;
           const year = new Date().getFullYear(); // Current year
           
+          console.log('Parsed booking details:', {
+            category: category.trim(),
+            day,
+            month,
+            time,
+            year
+          });
+
           // Update the booking in database
-          await collections.updateOne(
+          const result = await collections.updateOne(
             { 
               timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}`
             },
@@ -944,10 +951,12 @@ router.post("/swish/callback", async (req, res) => {
                 paymentId: id,
                 number: payerAlias,
                 cost: parseInt(amount),
-                bookedBy: 'Pending' // Will be updated by checkout endpoint
+                bookedBy: 'Pending'
               }
             }
           );
+
+          console.log('Database update result:', result);
 
           // Broadcast update
           broadcast({
@@ -964,11 +973,13 @@ router.post("/swish/callback", async (req, res) => {
               amount: parseInt(amount)
             }
           });
+        } else {
+          console.error('Failed to parse message:', message);
         }
       } catch (dbError) {
         console.error('Error updating booking:', dbError, {
           message,
-          parseResult: message.match(/([^\/]+)(\d+)\/(\w+)\s+(\d{2}:\d{2})/)
+          parseResult: message.match(/([A-Z\s]+)\s+(\d+)\/(\w+)\s+(\d{2}:\d{2})/)
         });
       }
     }
