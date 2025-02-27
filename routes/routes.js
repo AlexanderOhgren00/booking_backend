@@ -10,6 +10,7 @@ import https from 'https';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import axios from 'axios';
+import nodemailer from 'nodemailer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -23,6 +24,15 @@ const MONTHS = [
 ];
 
 const paymentStates = {};
+
+// Configure nodemailer transporter
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASSWORD
+    }
+});
 
 function haltOnTimedout(req, res, next) {
   if (!req.timedout) next()
@@ -956,23 +966,24 @@ router.post("/swish/callback", async (req, res) => {
             }
           );
 
+          try {
+            await axios.post('http://localhost:5173/payment-confirmation', {
+              status: 'success',
+              paymentId: id,
+              timeSlot: {
+                category: category.trim(),
+                day,
+                month,
+                time,
+                year
+              }
+            });
+          } catch (fetchError) {
+            console.error('Error sending confirmation to client:', fetchError);
+          }
+
           console.log('Database update result:', result);
 
-          // Broadcast update
-          broadcast({
-            type: "paymentComplete",
-            paymentReference,
-            status: "success",
-            message: "Payment completed successfully",
-            details: {
-              category: category.trim(),
-              year: year,
-              month: month,
-              day: parseInt(day),
-              time: time,
-              amount: parseInt(amount)
-            }
-          });
         } else {
           console.error('Failed to parse message:', message);
         }
@@ -1347,6 +1358,160 @@ router.get("/stats/daily-revenue/:year/:month", async (req, res) => {
   }
 });
 
+// Email confirmation route
+router.post('/send-confirmation', async (req, res) => {
+    try {
+        const { to, subject, bookingDetails } = req.body;
+
+        // Create email HTML content
+        const emailHtml = `
+              <div style="
+                  font-family: Arial, sans-serif;
+                  max-width: 600px;
+                  margin: 0 auto;
+                  padding: 60px 20px 40px 20px;
+              ">
+                  <div style="
+                      display: flex;
+                      flex-direction: column;
+                      align-items: center;
+                      text-align: center;
+                      margin-bottom: 20px;
+                  ">
+                      <div style="
+                          width: 150px;
+                          height: 150px;
+                          border-radius: 50%;
+                          border: 2px solid rgb(154, 220, 198);
+                          display: flex;
+                          justify-content: center;
+                          align-items: center;
+                          margin-bottom: 20px;
+                      ">
+                          <svg width="100" height="100" viewBox="0 0 24 24" fill="none">
+                              <path d="M20 6L9 17L4 12" stroke="rgb(154, 220, 198)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                          </svg>
+                      </div>
+                      <h1 style="color: #333;">Din order är bekräftad</h1>
+                  </div>
+
+                  <div style="
+                      background-color: rgb(17, 21, 22);
+                      border-radius: 15px;
+                      overflow: hidden;
+                  ">
+                      <div style="
+                          padding: 30px 10px;
+                          border-bottom: 1px solid rgb(29, 29, 29);
+                      ">
+                          <h2 style="
+                              margin: 10px 0 5px 0;
+                              color: white;
+                          ">Kvitto - Orderbekräftelse</h2>
+                          <p style="
+                              margin: 0;
+                              color: rgb(160, 160, 160);
+                          ">Bokningsnummer: ${bookingDetails.paymentId}</p>
+                          <p style="
+                              margin: 0;
+                              color: rgb(160, 160, 160);
+                          ">Bokningsdatum: ${bookingDetails.bookingDate}</p>
+                      </div>
+
+                      <div style="
+                          padding: 20px 10px;
+                          color: rgb(160, 160, 160);
+                      ">
+                          <p style="margin: 0;">Mint Escape Room AB | Org.nr: 559382-8444 44</p>
+                          <p style="margin: 0;">Vaksalagatan 31 A 753 31 Uppsala</p>
+                      </div>
+
+                      <div style="padding: 5px 10px;">
+                          ${bookingDetails.items.map(item => `
+                              <div style="
+                                  display: flex;
+                                  justify-content: space-between;
+                                  align-items: center;
+                                  margin: 10px 0;
+                                  color: white;
+                              ">
+                                  <div style="display: flex; align-items: center; gap: 10px;">
+                                      <div style="
+                                          width: 15px;
+                                          height: 15px;
+                                          border-radius: 50%;
+                                          border: 2px solid rgb(154, 220, 198);
+                                          display: flex;
+                                          justify-content: center;
+                                          align-items: center;
+                                      ">
+                                          <div style="
+                                              width: 10px;
+                                              height: 10px;
+                                              border-radius: 50%;
+                                              background-color: rgb(154, 220, 198);
+                                          "></div>
+                                      </div>
+                                      <p style="margin: 0;">
+                                          ${item.category} 
+                                          <span style="color: rgb(160, 160, 160);">
+                                              ${item.date} ${item.time} ${item.players} spelare
+                                          </span>
+                                      </p>
+                                  </div>
+                                  <p style="margin: 0;">SEK ${item.cost}</p>
+                              </div>
+                          `).join('')}
+                      </div>
+
+                      <div style="
+                          display: flex;
+                          justify-content: space-between;
+                          padding: 5px 10px;
+                          color: white;
+                      ">
+                          <p>Betalsätt</p>
+                          <p>${bookingDetails.paymentMethod}</p>
+                      </div>
+
+                      <div style="
+                          display: flex;
+                          justify-content: space-between;
+                          padding: 5px 10px;
+                          color: white;
+                      ">
+                          <p>Skatt</p>
+                          <p>SEK ${bookingDetails.tax}</p>
+                      </div>
+
+                      <div style="
+                          display: flex;
+                          justify-content: space-between;
+                          padding: 5px 10px;
+                          color: white;
+                      ">
+                          <p>Totalt</p>
+                          <p>SEK ${bookingDetails.totalCost}</p>
+                      </div>
+                  </div>
+              </div>
+          `;
+
+        // Send email
+        await transporter.sendMail({
+          from: process.env.EMAIL_USER,
+          to: to,
+          subject: subject,
+          html: emailData.html  // Use the styled HTML template
+      });
+
+        res.status(200).json({ message: 'Confirmation email sent successfully' });
+    } catch (error) {
+        console.error('Error sending confirmation email:', error);
+        res.status(500).json({ error: 'Failed to send confirmation email' });
+    }
+});
+
 export default router;
 
 // const order = {
@@ -1371,5 +1536,4 @@ export default router;
 //         url: "https://mintbackend-0066444807ba.herokuapp.com/eventCreated"
 //     }
 // ]
-// }
 // }
