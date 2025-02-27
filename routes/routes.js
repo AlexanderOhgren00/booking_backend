@@ -1436,35 +1436,38 @@ router.post('/send-confirmation', async (req, res) => {
 
                       <div style="padding: 0 10px;">
                           <div style="
-                              display: flex;
+                              display: grid;
+                              grid-template-columns: auto auto;
                               justify-content: space-between;
-                              align-items: center;
                               padding: 15px 0;
                               color: white;
                               border-top: 1px solid rgb(29, 29, 29);
+                              gap: 200px;
                           ">
                               <p style="margin: 0;">Betalsätt</p>
                               <p style="margin: 0;">${bookingDetails.paymentMethod}</p>
                           </div>
 
                           <div style="
-                              display: flex;
+                              display: grid;
+                              grid-template-columns: auto auto;
                               justify-content: space-between;
-                              align-items: center;
                               padding: 15px 0;
                               color: white;
+                              gap: 200px;
                           ">
                               <p style="margin: 0;">Skatt</p>
                               <p style="margin: 0;">SEK ${bookingDetails.tax}</p>
                           </div>
 
                           <div style="
-                              display: flex;
+                              display: grid;
+                              grid-template-columns: auto auto;
                               justify-content: space-between;
-                              align-items: center;
                               padding: 15px 0;
                               color: white;
                               border-top: 1px solid rgb(29, 29, 29);
+                              gap: 200px;
                           ">
                               <p style="margin: 0; font-weight: bold;">Totalt</p>
                               <p style="margin: 0; font-weight: bold;">SEK ${bookingDetails.totalCost}</p>
