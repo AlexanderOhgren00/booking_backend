@@ -1502,7 +1502,7 @@ router.post('/send-confirmation', async (req, res) => {
           from: process.env.EMAIL_USER,
           to: to,
           subject: subject,
-          html: emailData.html  // Use the styled HTML template
+          html: emailHtml.html  // Use the styled HTML template
       });
 
         res.status(200).json({ message: 'Confirmation email sent successfully' });
