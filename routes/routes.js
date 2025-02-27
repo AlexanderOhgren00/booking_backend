@@ -1378,20 +1378,6 @@ router.post('/send-confirmation', async (req, res) => {
                       text-align: center;
                       margin-bottom: 20px;
                   ">
-                      <div style="
-                          width: 150px;
-                          height: 150px;
-                          border-radius: 50%;
-                          border: 2px solid rgb(154, 220, 198);
-                          display: flex;
-                          justify-content: center;
-                          align-items: center;
-                          margin-bottom: 20px;
-                      ">
-                          <svg width="100" height="100" viewBox="0 0 24 24" fill="none">
-                              <path d="M20 6L9 17L4 12" stroke="rgb(154, 220, 198)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                          </svg>
-                      </div>
                       <h1 style="color: #333;">Din order är bekräftad</h1>
                   </div>
 
@@ -1436,22 +1422,6 @@ router.post('/send-confirmation', async (req, res) => {
                                   color: white;
                               ">
                                   <div style="display: flex; align-items: center; gap: 10px;">
-                                      <div style="
-                                          width: 15px;
-                                          height: 15px;
-                                          border-radius: 50%;
-                                          border: 2px solid rgb(154, 220, 198);
-                                          display: flex;
-                                          justify-content: center;
-                                          align-items: center;
-                                      ">
-                                          <div style="
-                                              width: 10px;
-                                              height: 10px;
-                                              border-radius: 50%;
-                                              background-color: rgb(154, 220, 198);
-                                          "></div>
-                                      </div>
                                       <p style="margin: 0;">
                                           ${item.category} 
                                           <span style="color: rgb(160, 160, 160);">
@@ -1467,31 +1437,39 @@ router.post('/send-confirmation', async (req, res) => {
                       <div style="
                           display: flex;
                           justify-content: space-between;
-                          padding: 5px 10px;
+                          align-items: center;
+                          width: 100%;
+                          padding: 15px 10px;
                           color: white;
+                          border-top: 1px solid rgb(29, 29, 29);
                       ">
-                          <p>Betalsätt</p>
-                          <p>${bookingDetails.paymentMethod}</p>
+                          <p style="margin: 0;">Betalsätt</p>
+                          <p style="margin: 0;">${bookingDetails.paymentMethod}</p>
                       </div>
 
                       <div style="
                           display: flex;
                           justify-content: space-between;
-                          padding: 5px 10px;
+                          align-items: center;
+                          width: 100%;
+                          padding: 15px 10px;
                           color: white;
                       ">
-                          <p>Skatt</p>
-                          <p>SEK ${bookingDetails.tax}</p>
+                          <p style="margin: 0;">Skatt</p>
+                          <p style="margin: 0;">SEK ${bookingDetails.tax}</p>
                       </div>
 
                       <div style="
                           display: flex;
                           justify-content: space-between;
-                          padding: 5px 10px;
+                          align-items: center;
+                          width: 100%;
+                          padding: 15px 10px;
                           color: white;
+                          border-top: 1px solid rgb(29, 29, 29);
                       ">
-                          <p>Totalt</p>
-                          <p>SEK ${bookingDetails.totalCost}</p>
+                          <p style="margin: 0; font-weight: bold;">Totalt</p>
+                          <p style="margin: 0; font-weight: bold;">SEK ${bookingDetails.totalCost}</p>
                       </div>
                   </div>
               </div>
