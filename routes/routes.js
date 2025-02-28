@@ -862,6 +862,8 @@ router.patch("/MonthBulkChangeTime", async (req, res) => {
     return res.status(400).json({ error: "Invalid updates format" });
   }
 
+  const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
   try {
     const collections = db.collection("bookings");
     const results = [];
@@ -869,45 +871,62 @@ router.patch("/MonthBulkChangeTime", async (req, res) => {
     for (const update of updates) {
       const { year, month, day, category, oldTime, newTime } = update;
       
-      // Debug log
-      console.log('Processing update:', {
-        year, month, day, category, oldTime, newTime,
-        searchTimeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`
-      });
-
-      // Get all time slots for the given month and category
-      const timeSlots = await collections.find({
-        year: parseInt(year),
-        month: month,
-        category: category,
-        time: oldTime
-      }).toArray();
-
-      console.log('Found time slots:', timeSlots);
-
-      if (!timeSlots || timeSlots.length === 0) {
+      // Convert day name to day number (0-6)
+      const dayIndex = DAYS.indexOf(day);
+      if (dayIndex === -1) {
         results.push({
           timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
           success: false,
-          error: "Original time slot not found"
+          error: "Invalid day name"
         });
         continue;
       }
 
-      // For each matching time slot
-      for (const slot of timeSlots) {
-        // Check if a slot with new time already exists
+      // Get all days in the month that match the weekday
+      const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
+      const matchingDays = [];
+      
+      for (let i = 1; i <= daysInMonth; i++) {
+        const date = new Date(year, MONTHS.indexOf(month), i);
+        if (date.getDay() === dayIndex) {
+          matchingDays.push(i);
+        }
+      }
+
+      console.log('Matching days for', day, ':', matchingDays);
+
+      // For each matching day, update the time slot
+      for (const matchingDay of matchingDays) {
+        // Check if the old time slot exists
+        const oldTimeSlot = await collections.findOne({
+          year: parseInt(year),
+          month: month,
+          day: matchingDay,
+          category: category,
+          time: oldTime
+        });
+
+        if (!oldTimeSlot) {
+          results.push({
+            timeSlotId: `${year}-${month}-${matchingDay}-${category}-${oldTime}`,
+            success: false,
+            error: "Original time slot not found"
+          });
+          continue;
+        }
+
+        // Check if the new time slot already exists
         const newTimeSlot = await collections.findOne({
           year: parseInt(year),
           month: month,
-          day: slot.day,
+          day: matchingDay,
           category: category,
           time: newTime
         });
 
         if (newTimeSlot) {
           results.push({
-            timeSlotId: `${year}-${month}-${slot.day}-${category}-${oldTime}`,
+            timeSlotId: `${year}-${month}-${matchingDay}-${category}-${oldTime}`,
             success: false,
             error: "New time slot already exists"
           });
@@ -919,21 +938,21 @@ router.patch("/MonthBulkChangeTime", async (req, res) => {
           { 
             year: parseInt(year),
             month: month,
-            day: slot.day,
+            day: matchingDay,
             category: category,
             time: oldTime
           },
           {
             $set: {
               time: newTime,
-              timeSlotId: `${year}-${month}-${slot.day}-${category}-${newTime}`
+              timeSlotId: `${year}-${month}-${matchingDay}-${category}-${newTime}`
             }
           }
         );
 
         results.push({
-          oldTimeSlotId: `${year}-${month}-${slot.day}-${category}-${oldTime}`,
-          newTimeSlotId: `${year}-${month}-${slot.day}-${category}-${newTime}`,
+          oldTimeSlotId: `${year}-${month}-${matchingDay}-${category}-${oldTime}`,
+          newTimeSlotId: `${year}-${month}-${matchingDay}-${category}-${newTime}`,
           success: result.modifiedCount > 0
         });
       }
