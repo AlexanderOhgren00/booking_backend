@@ -555,9 +555,11 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
 });
 
 router.patch("/MonthBulkTimeChange", async (req, res) => {
+  console.log("MonthBulkTimeChange endpoint called with body:", req.body);
   const { updates, minutesToAdd } = req.body;
 
   if (!updates || !Array.isArray(updates) || !minutesToAdd) {
+    console.log("Validation failed:", { updates, minutesToAdd });
     return res.status(400).json({ error: "Updates array and minutesToAdd are required" });
   }
 
@@ -565,35 +567,52 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
     const collections = db.collection("bookings");
     const results = [];
     const currentYear = new Date().getFullYear();
+    console.log("Starting update process with current year:", currentYear);
 
     // Get all years from current year up to 2030
     const years = Array.from(
       { length: 2030 - currentYear + 1 },
       (_, i) => currentYear + i
     );
+    console.log("Years to process:", years);
 
     for (const update of updates) {
       const { time, category, weekday, month } = update;
+      console.log("Processing update:", { time, category, weekday, month });
 
       // Update specific month for all years
       for (const year of years) {
+        console.log(`Processing year ${year} for ${month}`);
         // Get the number of days in this month
         const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
+        console.log(`Days in ${month} ${year}: ${daysInMonth}`);
 
         // Check each day in the month
         for (let day = 1; day <= daysInMonth; day++) {
           // Check if this day matches the selected weekday
           const currentDate = new Date(year, MONTHS.indexOf(month), day);
           if (currentDate.getDay() === weekday) {
+            console.log(`Found matching weekday for ${year}-${month}-${day}`);
             // Parse the original time
             const [hours, minutes] = time.split(':').map(Number);
             const originalDate = new Date(year, MONTHS.indexOf(month), day, hours, minutes);
             
             // Add the specified minutes
-            originalDate.setMinutes(originalDate.getMinutes() + minutesToAdd);
+            originalDate.setMinutes(originalDate.getMinutes() + parseInt(minutesToAdd));
             
             // Format the new time as HH:mm
             const newTime = `${String(originalDate.getHours()).padStart(2, '0')}:${String(originalDate.getMinutes()).padStart(2, '0')}`;
+            console.log(`Time conversion: ${time} -> ${newTime} (adding ${minutesToAdd} minutes)`);
+
+            // Log the query we're about to execute
+            console.log("Executing update query with:", {
+              year,
+              month,
+              day,
+              category,
+              time,
+              newTime
+            });
 
             const result = await collections.updateOne(
               {
@@ -612,6 +631,12 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
               }
             );
 
+            console.log("Update result:", {
+              matchedCount: result.matchedCount,
+              modifiedCount: result.modifiedCount,
+              timeSlot: `${year}-${month}-${day}-${category}-${time}`
+            });
+
             if (result.modifiedCount > 0) {
               results.push({
                 timeSlotId: `${year}-${month}-${day}-${category}-${time}`,
@@ -624,11 +649,14 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
       }
     }
 
+    console.log("Final results:", results);
+
     // Broadcast the update via WebSocket
     broadcast({
       type: "bulkTimeUpdate",
       data: { updates, minutesToAdd }
     });
+    console.log("WebSocket broadcast sent");
 
     res.json({
       message: "Bulk time change completed",
@@ -637,7 +665,7 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
     });
 
   } catch (error) {
-    console.error(error);
+    console.error("Error in MonthBulkTimeChange:", error);
     res.status(500).json({ error: "Server error while updating times" });
   }
 });
