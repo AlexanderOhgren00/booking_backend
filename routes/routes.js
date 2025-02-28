@@ -850,7 +850,99 @@ router.patch("/bulkChangeTime", async (req, res) => {
     });
 
   } catch (error) {
-    console.error(error);
+    console.error('Error updating times:', error);
+    res.status(500).json({ error: "Server error while updating times" });
+  }
+});
+
+router.patch("/MonthBulkChangeTime", async (req, res) => {
+  const { updates } = req.body;
+
+  if (!updates || !Array.isArray(updates)) {
+    return res.status(400).json({ error: "Invalid updates format" });
+  }
+
+  try {
+    const collections = db.collection("bookings");
+    const results = [];
+
+    for (const update of updates) {
+      const { year, month, day, category, oldTime, newTime } = update;
+
+      // First check if the old time slot exists
+      const oldTimeSlot = await collections.findOne({
+        year: parseInt(year),
+        month: month,
+        day: parseInt(day),
+        category: category,
+        time: oldTime
+      });
+
+      if (!oldTimeSlot) {
+        results.push({
+          timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
+          success: false,
+          error: "Original time slot not found"
+        });
+        continue;
+      }
+
+      // Check if the new time slot already exists
+      const newTimeSlot = await collections.findOne({
+        year: parseInt(year),
+        month: month,
+        day: parseInt(day),
+        category: category,
+        time: newTime
+      });
+
+      if (newTimeSlot) {
+        results.push({
+          timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
+          success: false,
+          error: "New time slot already exists"
+        });
+        continue;
+      }
+
+      // Update the time slot
+      const result = await collections.updateOne(
+        { 
+          year: parseInt(year),
+          month: month,
+          day: parseInt(day),
+          category: category,
+          time: oldTime
+        },
+        {
+          $set: {
+            time: newTime,
+            timeSlotId: `${year}-${month}-${day}-${category}-${newTime}`
+          }
+        }
+      );
+
+      results.push({
+        oldTimeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
+        newTimeSlotId: `${year}-${month}-${day}-${category}-${newTime}`,
+        success: result.modifiedCount > 0
+      });
+    }
+
+    // Broadcast updates via WebSocket
+    broadcast({
+      type: "bulkTimeUpdate",
+      data: { updates, results }
+    });
+
+    res.json({
+      message: "Bulk time update completed",
+      results,
+      modifiedCount: results.filter(r => r.success).length
+    });
+
+  } catch (error) {
+    console.error('Error updating times:', error);
     res.status(500).json({ error: "Server error while updating times" });
   }
 });
