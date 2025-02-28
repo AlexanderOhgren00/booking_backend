@@ -893,7 +893,12 @@ router.patch("/MonthBulkChangeTime", async (req, res) => {
         }
       }
 
-      console.log('Matching days for', day, ':', matchingDays);
+      console.log('Processing update for:', {
+        category,
+        oldTime,
+        newTime,
+        matchingDays
+      });
 
       // For each matching day, update the time slot
       for (const matchingDay of matchingDays) {
