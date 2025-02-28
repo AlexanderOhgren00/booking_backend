@@ -871,11 +871,7 @@ router.patch("/MonthBulkChangeTime", async (req, res) => {
 
       // First check if the old time slot exists
       const oldTimeSlot = await collections.findOne({
-        year: parseInt(year),
-        month: month,
-        day: parseInt(day),
-        category: category,
-        time: oldTime
+        timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`
       });
 
       if (!oldTimeSlot) {
@@ -889,11 +885,7 @@ router.patch("/MonthBulkChangeTime", async (req, res) => {
 
       // Check if the new time slot already exists
       const newTimeSlot = await collections.findOne({
-        year: parseInt(year),
-        month: month,
-        day: parseInt(day),
-        category: category,
-        time: newTime
+        timeSlotId: `${year}-${month}-${day}-${category}-${newTime}`
       });
 
       if (newTimeSlot) {
@@ -907,13 +899,7 @@ router.patch("/MonthBulkChangeTime", async (req, res) => {
 
       // Update the time slot
       const result = await collections.updateOne(
-        { 
-          year: parseInt(year),
-          month: month,
-          day: parseInt(day),
-          category: category,
-          time: oldTime
-        },
+        { timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}` },
         {
           $set: {
             time: newTime,
