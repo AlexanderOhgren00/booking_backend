@@ -1141,8 +1141,8 @@ router.get("/search/bookings", async (req, res) => {
     const collections = db.collection("bookings");
     let query = { available: false }; // Only search booked slots
 
-    // Check if searchTerm contains only numbers
-    if (/^\d+$/.test(searchTerm)) {
+    // Check if searchTerm contains any numbers
+    if (/\d/.test(searchTerm)) {
       // Search by paymentId
       query.paymentId = {
         $regex: searchTerm,
