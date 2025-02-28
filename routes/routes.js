@@ -868,13 +868,24 @@ router.patch("/MonthBulkChangeTime", async (req, res) => {
 
     for (const update of updates) {
       const { year, month, day, category, oldTime, newTime } = update;
-
-      // First check if the old time slot exists
-      const oldTimeSlot = await collections.findOne({
-        timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`
+      
+      // Debug log
+      console.log('Processing update:', {
+        year, month, day, category, oldTime, newTime,
+        searchTimeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`
       });
 
-      if (!oldTimeSlot) {
+      // Get all time slots for the given month and category
+      const timeSlots = await collections.find({
+        year: parseInt(year),
+        month: month,
+        category: category,
+        time: oldTime
+      }).toArray();
+
+      console.log('Found time slots:', timeSlots);
+
+      if (!timeSlots || timeSlots.length === 0) {
         results.push({
           timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
           success: false,
@@ -883,36 +894,49 @@ router.patch("/MonthBulkChangeTime", async (req, res) => {
         continue;
       }
 
-      // Check if the new time slot already exists
-      const newTimeSlot = await collections.findOne({
-        timeSlotId: `${year}-${month}-${day}-${category}-${newTime}`
-      });
-
-      if (newTimeSlot) {
-        results.push({
-          timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
-          success: false,
-          error: "New time slot already exists"
+      // For each matching time slot
+      for (const slot of timeSlots) {
+        // Check if a slot with new time already exists
+        const newTimeSlot = await collections.findOne({
+          year: parseInt(year),
+          month: month,
+          day: slot.day,
+          category: category,
+          time: newTime
         });
-        continue;
-      }
 
-      // Update the time slot
-      const result = await collections.updateOne(
-        { timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}` },
-        {
-          $set: {
-            time: newTime,
-            timeSlotId: `${year}-${month}-${day}-${category}-${newTime}`
-          }
+        if (newTimeSlot) {
+          results.push({
+            timeSlotId: `${year}-${month}-${slot.day}-${category}-${oldTime}`,
+            success: false,
+            error: "New time slot already exists"
+          });
+          continue;
         }
-      );
 
-      results.push({
-        oldTimeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
-        newTimeSlotId: `${year}-${month}-${day}-${category}-${newTime}`,
-        success: result.modifiedCount > 0
-      });
+        // Update the time slot
+        const result = await collections.updateOne(
+          { 
+            year: parseInt(year),
+            month: month,
+            day: slot.day,
+            category: category,
+            time: oldTime
+          },
+          {
+            $set: {
+              time: newTime,
+              timeSlotId: `${year}-${month}-${slot.day}-${category}-${newTime}`
+            }
+          }
+        );
+
+        results.push({
+          oldTimeSlotId: `${year}-${month}-${slot.day}-${category}-${oldTime}`,
+          newTimeSlotId: `${year}-${month}-${slot.day}-${category}-${newTime}`,
+          success: result.modifiedCount > 0
+        });
+      }
     }
 
     // Broadcast updates via WebSocket
