@@ -1139,15 +1139,24 @@ router.get("/search/bookings", async (req, res) => {
 
   try {
     const collections = db.collection("bookings");
+    let query = { available: false }; // Only search booked slots
 
-    // Create case-insensitive search with index
-    const result = await collections.find({
-      bookedBy: {
+    // Check if searchTerm contains only numbers
+    if (/^\d+$/.test(searchTerm)) {
+      // Search by paymentId
+      query.paymentId = {
         $regex: searchTerm,
-        $options: 'i' // case-insensitive
-      },
-      available: false // Only search booked slots
-    })
+        $options: 'i'
+      };
+    } else {
+      // Search by bookedBy (name)
+      query.bookedBy = {
+        $regex: searchTerm,
+        $options: 'i'
+      };
+    }
+
+    const result = await collections.find(query)
       .project({
         year: 1,
         month: 1,
@@ -1158,6 +1167,7 @@ router.get("/search/bookings", async (req, res) => {
         email: 1,
         number: 1,
         timeSlotId: 1,
+        paymentId: 1,
         _id: 1
       })
       .sort({ year: 1, month: 1, day: 1, time: 1 })
