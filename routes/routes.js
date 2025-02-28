@@ -554,6 +554,94 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
   }
 });
 
+router.patch("/MonthBulkTimeChange", async (req, res) => {
+  const { updates, minutesToAdd } = req.body;
+
+  if (!updates || !Array.isArray(updates) || !minutesToAdd) {
+    return res.status(400).json({ error: "Updates array and minutesToAdd are required" });
+  }
+
+  try {
+    const collections = db.collection("bookings");
+    const results = [];
+    const currentYear = new Date().getFullYear();
+
+    // Get all years from current year up to 2030
+    const years = Array.from(
+      { length: 2030 - currentYear + 1 },
+      (_, i) => currentYear + i
+    );
+
+    for (const update of updates) {
+      const { time, category, weekday, month } = update;
+
+      // Update specific month for all years
+      for (const year of years) {
+        // Get the number of days in this month
+        const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
+
+        // Check each day in the month
+        for (let day = 1; day <= daysInMonth; day++) {
+          // Check if this day matches the selected weekday
+          const currentDate = new Date(year, MONTHS.indexOf(month), day);
+          if (currentDate.getDay() === weekday) {
+            // Parse the original time
+            const [hours, minutes] = time.split(':').map(Number);
+            const originalDate = new Date(year, MONTHS.indexOf(month), day, hours, minutes);
+            
+            // Add the specified minutes
+            originalDate.setMinutes(originalDate.getMinutes() + minutesToAdd);
+            
+            // Format the new time as HH:mm
+            const newTime = `${String(originalDate.getHours()).padStart(2, '0')}:${String(originalDate.getMinutes()).padStart(2, '0')}`;
+
+            const result = await collections.updateOne(
+              {
+                year: year,
+                month: month,
+                day: day,
+                category: category,
+                time: time,
+                available: true // Only update if available is true
+              },
+              {
+                $set: {
+                  time: newTime,
+                  timeSlotId: `${year}-${month}-${day}-${category}-${newTime}`
+                }
+              }
+            );
+
+            if (result.modifiedCount > 0) {
+              results.push({
+                timeSlotId: `${year}-${month}-${day}-${category}-${time}`,
+                newTimeSlotId: `${year}-${month}-${day}-${category}-${newTime}`,
+                success: true
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // Broadcast the update via WebSocket
+    broadcast({
+      type: "bulkTimeUpdate",
+      data: { updates, minutesToAdd }
+    });
+
+    res.json({
+      message: "Bulk time change completed",
+      results,
+      modifiedCount: results.length
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error while updating times" });
+  }
+});
+
 router.delete("/deleteRoomDiscount", async (req, res) => {
   const { key } = req.body;
 
@@ -841,132 +929,6 @@ router.patch("/bulkChangeTime", async (req, res) => {
     broadcast({
       type: "bulkTimeUpdate",
       data: updates
-    });
-
-    res.json({
-      message: "Bulk time update completed",
-      results,
-      modifiedCount: results.filter(r => r.success).length
-    });
-
-  } catch (error) {
-    console.error('Error updating times:', error);
-    res.status(500).json({ error: "Server error while updating times" });
-  }
-});
-
-router.patch("/MonthBulkChangeTime", async (req, res) => {
-  const { updates } = req.body;
-
-  if (!updates || !Array.isArray(updates)) {
-    return res.status(400).json({ error: "Invalid updates format" });
-  }
-
-  const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-
-  try {
-    const collections = db.collection("bookings");
-    const results = [];
-
-    for (const update of updates) {
-      const { year, month, day, category, oldTime, newTime } = update;
-      
-      // Convert day name to day number (0-6)
-      const dayIndex = DAYS.indexOf(day);
-      if (dayIndex === -1) {
-        results.push({
-          timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`,
-          success: false,
-          error: "Invalid day name"
-        });
-        continue;
-      }
-
-      // Get all days in the month that match the weekday
-      const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
-      const matchingDays = [];
-      
-      for (let i = 1; i <= daysInMonth; i++) {
-        const date = new Date(year, MONTHS.indexOf(month), i);
-        if (date.getDay() === dayIndex) {
-          matchingDays.push(i);
-        }
-      }
-
-      console.log('Processing update for:', {
-        category,
-        oldTime,
-        newTime,
-        matchingDays
-      });
-
-      // For each matching day, update the time slot
-      for (const matchingDay of matchingDays) {
-        // Check if the old time slot exists
-        const oldTimeSlot = await collections.findOne({
-          year: parseInt(year),
-          month: month,
-          day: matchingDay,
-          category: category,
-          time: oldTime
-        });
-
-        if (!oldTimeSlot) {
-          results.push({
-            timeSlotId: `${year}-${month}-${matchingDay}-${category}-${oldTime}`,
-            success: false,
-            error: "Original time slot not found"
-          });
-          continue;
-        }
-
-        // Check if the new time slot already exists
-        const newTimeSlot = await collections.findOne({
-          year: parseInt(year),
-          month: month,
-          day: matchingDay,
-          category: category,
-          time: newTime
-        });
-
-        if (newTimeSlot) {
-          results.push({
-            timeSlotId: `${year}-${month}-${matchingDay}-${category}-${oldTime}`,
-            success: false,
-            error: "New time slot already exists"
-          });
-          continue;
-        }
-
-        // Update the time slot
-        const result = await collections.updateOne(
-          { 
-            year: parseInt(year),
-            month: month,
-            day: matchingDay,
-            category: category,
-            time: oldTime
-          },
-          {
-            $set: {
-              time: newTime,
-              timeSlotId: `${year}-${month}-${matchingDay}-${category}-${newTime}`
-            }
-          }
-        );
-
-        results.push({
-          oldTimeSlotId: `${year}-${month}-${matchingDay}-${category}-${oldTime}`,
-          newTimeSlotId: `${year}-${month}-${matchingDay}-${category}-${newTime}`,
-          success: result.modifiedCount > 0
-        });
-      }
-    }
-
-    // Broadcast updates via WebSocket
-    broadcast({
-      type: "bulkTimeUpdate",
-      data: { updates, results }
     });
 
     res.json({
