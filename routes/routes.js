@@ -166,7 +166,8 @@ router.post("/v1/payments/:paymentId/session-complete", async (req, res) => {
 
 router.post("/send-paylink", async (req, res) => {
   try {
-    const product = req.body;
+    
+    const {order, email} = req.body;
 
     // Create payment request
     const paymentResponse = await fetch("https://test.api.dibspayment.eu/v1/payments", {
@@ -175,7 +176,7 @@ router.post("/send-paylink", async (req, res) => {
         "Content-Type": "application/json",
         "Authorization": key,
       },
-      body: JSON.stringify(product)
+      body: JSON.stringify(order)
     });
 
     const paymentData = await paymentResponse.json();
@@ -188,7 +189,7 @@ router.post("/send-paylink", async (req, res) => {
     // Send email with payment link
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
-      to: paymentData.email,
+      to: email,
       subject: "Your Payment Link",
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
