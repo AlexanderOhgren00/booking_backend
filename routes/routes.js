@@ -179,7 +179,7 @@ router.post("/send-paylink", async (req, res) => {
     });
 
     const paymentData = await paymentResponse.json();
-    console.log(paymentData);
+    console.log(paymentData, "paymendDATA :DDDD");
 
     if (!paymentData.paymentId) {
       throw new Error("Failed to create payment");
@@ -188,8 +188,8 @@ router.post("/send-paylink", async (req, res) => {
     // Send email with payment link
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
-      to: email,
-      subject: subject || "Your Payment Link",
+      to: paymentData.email,
+      subject: "Your Payment Link",
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <h2>Payment Link for Your Booking</h2>
