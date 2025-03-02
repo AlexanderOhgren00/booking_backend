@@ -1484,6 +1484,139 @@ router.get("/stats/daily-revenue/:year/:month", async (req, res) => {
   }
 });
 
+router.get("/edit-confirmation", async (req, res) => {
+  try {
+    const { to, subject, bookingDetails } = req.body;
+
+    // Create email HTML content
+    const emailHtml = `
+          <div style="
+              font-family: Arial, sans-serif;
+              max-width: 600px;
+              margin: 0 auto;
+              padding: 60px 20px 40px 20px;
+          ">
+              <div style="
+                  display: flex;
+                  flex-direction: column;
+                  align-items: center;
+                  text-align: center;
+                  margin-bottom: 20px;
+              ">
+                  <h1 style="color: #333;">Din bokning har blivit ändrad</h1>
+              </div>
+
+              <div style="
+                  background-color: rgb(17, 21, 22);
+                  border-radius: 15px;
+                  overflow: hidden;
+              ">
+                  <div style="
+                      padding: 30px 10px;
+                      border-bottom: 1px solid rgb(29, 29, 29);
+                  ">
+                      <h2 style="
+                          margin: 10px 0 5px 0;
+                          color: white;
+                      ">Kvitto - Bokningsändring</h2>
+                      <p style="
+                          margin: 0;
+                          color: rgb(160, 160, 160);
+                      ">Bokningsnummer: ${bookingDetails.paymentId}</p>
+                      <p style="
+                          margin: 0;
+                          color: rgb(160, 160, 160);
+                      ">Bokningsdatum: ${bookingDetails.bookingDate}</p>
+                  </div>
+
+                  <div style="
+                      padding: 20px 10px;
+                      color: rgb(160, 160, 160);
+                  ">
+                      <p style="margin: 0;">Mint Escape Room AB | Org.nr: 559382-8444 44</p>
+                      <p style="margin: 0;">Vaksalagatan 31 A 753 31 Uppsala</p>
+                  </div>
+
+                  <div style="padding: 5px 10px;">
+                      ${bookingDetails.items.map(item => `
+                          <div style="
+                              display: flex;
+                              justify-content: space-between;
+                              align-items: center;
+                              margin: 10px 0;
+                              color: white;
+                          ">
+                              <div style="display: flex; align-items: center; gap: 10px;">
+                                  <p style="margin: 0;">
+                                      ${item.category} 
+                                      <span style="color: rgb(160, 160, 160);">
+                                          ${item.date} ${item.time} ${item.players} spelare
+                                      </span>
+                                  </p>
+                              </div>
+                              <p style="margin: 0;">SEK ${item.cost}</p>
+                          </div>
+                      `).join('')}
+                  </div>
+
+                  <div style="padding: 0 10px;">
+                      <div style="
+                          display: grid;
+                          grid-template-columns: auto auto;
+                          justify-content: space-between;
+                          padding: 15px 0;
+                          color: white;
+                          border-top: 1px solid rgb(29, 29, 29);
+                          gap: 200px;
+                      ">
+                          <p style="margin: 0;">Betalsätt</p>
+                          <p style="margin: 0;">${bookingDetails.paymentMethod}</p>
+                      </div>
+
+                      <div style="
+                          display: grid;
+                          grid-template-columns: auto auto;
+                          justify-content: space-between;
+                          padding: 15px 0;
+                          color: white;
+                          gap: 200px;
+                      ">
+                          <p style="margin: 0;">Skatt</p>
+                          <p style="margin: 0;">SEK ${bookingDetails.tax}</p>
+                      </div>
+
+                      <div style="
+                          display: grid;
+                          grid-template-columns: auto auto;
+                          justify-content: space-between;
+                          padding: 15px 0;
+                          color: white;
+                          border-top: 1px solid rgb(29, 29, 29);
+                          gap: 200px;
+                      ">
+                          <p style="margin: 0; font-weight: bold;">Totalt</p>
+                          <p style="margin: 0; font-weight: bold;">SEK ${bookingDetails.totalCost}</p>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      `;
+
+    // Send email
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: to,
+      subject: subject,
+      html: emailHtml
+  });
+
+    res.status(200).json({ message: 'Confirmation email sent successfully' });
+  } catch (error) {
+      console.error('Error sending confirmation email:', error);
+      res.status(500).json({ error: 'Failed to send confirmation email' });
+  }
+});
+
 // Email confirmation route
 router.post('/send-confirmation', async (req, res) => {
     try {
