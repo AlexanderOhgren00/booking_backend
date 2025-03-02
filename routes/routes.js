@@ -1484,7 +1484,7 @@ router.get("/stats/daily-revenue/:year/:month", async (req, res) => {
   }
 });
 
-router.get("/edit-confirmation", async (req, res) => {
+router.post("/edit-confirmation", async (req, res) => {
   try {
     const { to, subject, bookingDetails } = req.body;
 
