@@ -166,7 +166,7 @@ router.post("/v1/payments/:paymentId/session-complete", async (req, res) => {
 
 router.post("/send-paylink", async (req, res) => {
   try {
-    const { order, email, subject } = req.body;
+    const product = req.body;
 
     // Create payment request
     const paymentResponse = await fetch("https://test.api.dibspayment.eu/v1/payments", {
@@ -175,29 +175,11 @@ router.post("/send-paylink", async (req, res) => {
         "Content-Type": "application/json",
         "Authorization": key,
       },
-      body: JSON.stringify({
-        order: {
-          items: order.items,
-          amount: order.amount,
-          currency: "SEK",
-          reference: Math.random().toString(36).substring(2, 15)
-        },
-        checkout: {
-          integrationType: "PaymentLink",
-          returnUrl: "https://your-frontend-url/payment-complete",
-          cancelUrl: "https://your-frontend-url/payment-cancelled",
-          termsUrl: "https://your-frontend-url/terms"
-        },
-        notifications: {
-          webHooks: [{
-            eventName: "payment.created",
-            url: "https://mintbackend-0066444807ba.herokuapp.com/eventCreated"
-          }]
-        }
-      })
+      body: JSON.stringify(product)
     });
 
     const paymentData = await paymentResponse.json();
+    console.log(paymentData);
 
     if (!paymentData.paymentId) {
       throw new Error("Failed to create payment");
