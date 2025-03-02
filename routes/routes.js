@@ -164,6 +164,81 @@ router.post("/v1/payments/:paymentId/session-complete", async (req, res) => {
   }
 });
 
+router.post("/send-paylink", async (req, res) => {
+  try {
+    const { order, email, subject } = req.body;
+
+    // Create payment request
+    const paymentResponse = await fetch("https://test.api.dibspayment.eu/v1/payments", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": key,
+      },
+      body: JSON.stringify({
+        order: {
+          items: order.items,
+          amount: order.amount,
+          currency: "SEK",
+          reference: Math.random().toString(36).substring(2, 15)
+        },
+        checkout: {
+          integrationType: "PaymentLink",
+          returnUrl: "https://your-frontend-url/payment-complete",
+          cancelUrl: "https://your-frontend-url/payment-cancelled",
+          termsUrl: "https://your-frontend-url/terms"
+        },
+        notifications: {
+          webHooks: [{
+            eventName: "payment.created",
+            url: "https://mintbackend-0066444807ba.herokuapp.com/eventCreated"
+          }]
+        }
+      })
+    });
+
+    const paymentData = await paymentResponse.json();
+
+    if (!paymentData.paymentId) {
+      throw new Error("Failed to create payment");
+    }
+
+    // Send email with payment link
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: subject || "Your Payment Link",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2>Payment Link for Your Booking</h2>
+          <p>Click the link below to complete your payment:</p>
+          <a href="${paymentData.hostedPaymentPageUrl}" 
+             style="display: inline-block; padding: 10px 20px; background-color: #4CAF50; color: white; 
+                    text-decoration: none; border-radius: 5px; margin: 20px 0;">
+            Complete Payment
+          </a>
+          <p>This payment link will expire in 24 hours.</p>
+          <p>If you have any questions, please contact us.</p>
+        </div>
+      `
+    });
+
+    res.json({
+      success: true,
+      message: "Payment link sent successfully",
+      paymentId: paymentData.paymentId,
+      hostedPaymentPageUrl: paymentData.hostedPaymentPageUrl
+    });
+
+  } catch (error) {
+    console.error("Error sending payment link:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message || "Failed to send payment link"
+    });
+  }
+});
+
 router.post("/eventCreated", async (req, res) => {
   try {
     const event = req.body;
