@@ -226,12 +226,12 @@ router.post("/eventCreated", async (req, res) => {
         
         // Log the order details
         console.log("Order details:", {
-          amount: orderData.amount,
+          amount: orderData.amount.amount,
           reference: orderData.reference,
           orderItems: orderData.orderItems
         });
 
-        const amount = orderData.amount;
+        const amount = orderData.amount.amount;
 
         const chargeResponse = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
           method: "POST",
