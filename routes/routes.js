@@ -149,21 +149,6 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
   }
 });
 
-router.post("/v1/payments/:paymentId/session-complete", async (req, res) => {
-  try {
-    const paymentId = req.params.paymentId;
-    if (!paymentStates[paymentId]) {
-      return res.status(404).json({ error: "Payment session not found" });
-    }
-    delete paymentStates[paymentId];
-    res.status(200).json({ message: "Payment session completed and removed from state", paymentId });
-
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 router.post("/send-paylink", async (req, res) => {
   try {
 
@@ -229,16 +214,67 @@ router.post("/eventCreated", async (req, res) => {
     // Log the event for debugging purposes
     console.log("Webhook event received:", event);
 
-    // Process the event (you can add your custom logic here)
-    // For example, you might want to handle different event types differently
-    switch (event.eventname) {
+    // Process the event based on the event type
+    switch (event.event) {
       case "payment.created":
         // Handle payment created event
-        console.log("Payment created event:", event.data.order);
+        console.log("Payment created event:", event.data);
+        
+        // Extract order details
+        const orderData = event.data.order;
+        const paymentId = event.data.paymentId;
+        
+        // Log the order details
+        console.log("Order details:", {
+          amount: orderData.amount,
+          reference: orderData.reference,
+          orderItems: orderData.orderItems
+        });
+
+        const amount = orderData.amount;
+
+        const chargeResponse = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": key,
+          },
+          body: JSON.stringify(
+            {
+              amount: amount,
+            }
+          )
+        });
+
+        const chargeData = await chargeResponse.json();
+        console.log("Charge response:", chargeData);
+
+        // Update all bookings with this paymentId in database
+        const collections = db.collection("bookings");
+        const result = await collections.updateMany(
+          { paymentId: paymentId },
+          {
+            $set: {
+              available: false,
+              payed: "Nets Easy"
+            }
+          }
+        );
+
+        console.log("Booking update result:", {
+          matchedCount: result.matchedCount,
+          modifiedCount: result.modifiedCount
+        });
+
+        // Terminate payment in paymentStates
+        if (paymentStates[paymentId]) {
+          delete paymentStates[paymentId];
+          console.log("Payment terminated from paymentStates:", paymentId);
+        }
+        
         break;
-      // Add more cases as needed for different event types
       default:
-        console.log("Unhandled event type:", event.eventname);
+        console.log("Unhandled event type:", event.event);
     }
 
     // Respond to the webhook request
