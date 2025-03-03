@@ -27,11 +27,11 @@ const paymentStates = {};
 
 // Configure nodemailer transporter
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD
-    }
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASSWORD
+  }
 });
 
 function haltOnTimedout(req, res, next) {
@@ -166,8 +166,8 @@ router.post("/v1/payments/:paymentId/session-complete", async (req, res) => {
 
 router.post("/send-paylink", async (req, res) => {
   try {
-    
-    const {order, email} = req.body;
+
+    const { order, email } = req.body;
 
     // Create payment request
     const paymentResponse = await fetch("https://test.api.dibspayment.eu/v1/payments", {
@@ -234,7 +234,7 @@ router.post("/eventCreated", async (req, res) => {
     switch (event.eventname) {
       case "payment.created":
         // Handle payment created event
-        console.log("Payment created event:", event);
+        console.log("Payment created event:", event.data.order);
         break;
       // Add more cases as needed for different event types
       default:
@@ -529,7 +529,7 @@ router.get("/roomDiscounts", async (req, res) => {
   try {
     const discounts = await db.collection("roomDiscounts").find({}).toArray();
     res.json(discounts);
-    
+
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: error.message });
@@ -654,10 +654,10 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
             // Parse the original time
             const [hours, minutes] = time.split(':').map(Number);
             const originalDate = new Date(year, MONTHS.indexOf(month), day, hours, minutes);
-            
+
             // Add the specified minutes
             originalDate.setMinutes(originalDate.getMinutes() + parseInt(minutesToAdd));
-            
+
             // Format the new time as HH:mm
             const newTime = `${String(originalDate.getHours()).padStart(2, '0')}:${String(originalDate.getMinutes()).padStart(2, '0')}`;
             console.log(`Time conversion: ${time} -> ${newTime} (adding ${minutesToAdd} minutes)`);
@@ -1091,7 +1091,7 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
 
 router.post("/swish/callback", async (req, res) => {
   try {
-    const { 
+    const {
       id,
       payeePaymentReference,
       paymentReference,
@@ -1107,14 +1107,14 @@ router.post("/swish/callback", async (req, res) => {
     if (status === 'PAID') {
       try {
         const collections = db.collection("bookings");
-        
+
         // Parse message format: "SUBMARINE 26/February 21:30"
         const mainBookingMatch = message.match(/([A-Z\s]+)\s+(\d+)\/(\w+)\s+(\d{2}:\d{2})/);
-        
+
         if (mainBookingMatch) {
           const [_, category, day, month, time] = mainBookingMatch;
           const year = new Date().getFullYear(); // Current year
-          
+
           console.log('Parsed booking details:', {
             category: category.trim(),
             day,
@@ -1125,7 +1125,7 @@ router.post("/swish/callback", async (req, res) => {
 
           // Update the booking in database
           const result = await collections.updateOne(
-            { 
+            {
               timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}`
             },
             {
@@ -1170,14 +1170,14 @@ router.post("/swish/callback", async (req, res) => {
     }
 
     // Always return 200 OK to Swish
-    res.status(200).json({ 
+    res.status(200).json({
       message: 'Callback received',
       receivedData: req.body
     });
 
   } catch (error) {
     console.error('Swish callback error:', error);
-    res.status(200).json({ 
+    res.status(200).json({
       error: 'Callback processing error',
       errorDetails: error.message
     });
@@ -1203,7 +1203,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     });
 
     // Set payerAlias only if it's not a mobile payment
-    
+
 
     const client = axios.create({ httpsAgent });
 
@@ -1364,7 +1364,7 @@ router.get("/stats/monthly-players/:year/:month", async (req, res) => {
     const year = parseInt(req.params.year);
     const month = req.params.month;
     const collections = db.collection("bookings");
-    
+
     // Define all possible categories
     const allCategories = [
       "SCHOOL OF MAGIC",
@@ -1393,8 +1393,8 @@ router.get("/stats/monthly-players/:year/:month", async (req, res) => {
           totalPlayers: { $sum: "$players" },
           totalBookings: { $sum: 1 },
           totalRevenue: { $sum: "$cost" }, // Add revenue calculation
-          avgPerDay: { 
-            $avg: "$players" 
+          avgPerDay: {
+            $avg: "$players"
           }
         }
       },
@@ -1447,8 +1447,8 @@ router.get("/stats/monthly-players/:year/:month", async (req, res) => {
 
     // Ensure all categories are represented
     const categoryStats = new Map(stats.categories.map(c => [c.category, c]));
-    
-    stats.categories = allCategories.map(category => 
+
+    stats.categories = allCategories.map(category =>
       categoryStats.get(category) || {
         category,
         time: null,
@@ -1666,22 +1666,22 @@ router.post("/edit-confirmation", async (req, res) => {
       to: to,
       subject: subject,
       html: emailHtml
-  });
+    });
 
     res.status(200).json({ message: 'Confirmation email sent successfully' });
   } catch (error) {
-      console.error('Error sending confirmation email:', error);
-      res.status(500).json({ error: 'Failed to send confirmation email' });
+    console.error('Error sending confirmation email:', error);
+    res.status(500).json({ error: 'Failed to send confirmation email' });
   }
 });
 
 // Email confirmation route
 router.post('/send-confirmation', async (req, res) => {
-    try {
-        const { to, subject, bookingDetails } = req.body;
+  try {
+    const { to, subject, bookingDetails } = req.body;
 
-        // Create email HTML content
-        const emailHtml = `
+    // Create email HTML content
+    const emailHtml = `
               <div style="
                   font-family: Arial, sans-serif;
                   max-width: 600px;
@@ -1794,19 +1794,19 @@ router.post('/send-confirmation', async (req, res) => {
               </div>
           `;
 
-        // Send email
-        await transporter.sendMail({
-          from: process.env.EMAIL_USER,
-          to: to,
-          subject: subject,
-          html: emailHtml
-      });
+    // Send email
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: to,
+      subject: subject,
+      html: emailHtml
+    });
 
-        res.status(200).json({ message: 'Confirmation email sent successfully' });
-    } catch (error) {
-        console.error('Error sending confirmation email:', error);
-        res.status(500).json({ error: 'Failed to send confirmation email' });
-    }
+    res.status(200).json({ message: 'Confirmation email sent successfully' });
+  } catch (error) {
+    console.error('Error sending confirmation email:', error);
+    res.status(500).json({ error: 'Failed to send confirmation email' });
+  }
 });
 
 export default router;
