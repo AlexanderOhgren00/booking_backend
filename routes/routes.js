@@ -266,6 +266,26 @@ router.post("/eventCreated", async (req, res) => {
           modifiedCount: result.modifiedCount
         });
 
+        // Get the updated bookings to send customer info
+        const updatedBookings = await collections.find({ paymentId: paymentId }).toArray();
+        
+        // Notify client about successful payment
+        try {
+          await axios.post('https://mint-escape-room.vercel.app/payment-confirmation', {
+            status: 'success',
+            paymentId: paymentId,
+            type: 'nets',
+            bookings: updatedBookings.map(booking => ({
+              timeSlotId: booking.timeSlotId,
+              bookedBy: booking.bookedBy,
+              email: booking.email,
+              players: booking.players
+            }))
+          });
+        } catch (clientError) {
+          console.error('Error notifying client:', clientError);
+        }
+
         // Terminate payment in paymentStates
         if (paymentStates[paymentId]) {
           delete paymentStates[paymentId];
@@ -1108,6 +1128,26 @@ router.patch("/singleRoomDiscount", async (req, res) => {
     console.error(error);
     res.status(500).json({ error: "Server error while updating discount" });
   }
+});
+
+router.post("/swish-payment-confirmation", async (req, res) => {
+  const { paymentId } = req.body;
+
+  if (!paymentId) {
+    console.log("No paymentId provided in request");
+    return res.status(400).json({ error: "Payment ID is required" });
+  }
+
+  if (!paymentStates[paymentId]) {
+    return res.json({
+      status: "PAID"
+    })
+  }
+  
+  res.json({
+    status: "NOT PAID"
+  })
+
 });
 
 // Get all bookings for a specific day
