@@ -1143,60 +1143,19 @@ router.post("/swish/callback", async (req, res) => {
     if (status === 'PAID') {
       try {
         const collections = db.collection("bookings");
+        const paymentId = req.body.id;
 
-        // Parse message format: "SUBMARINE 26/February 21:30"
-        const mainBookingMatch = message.match(/([A-Z\s]+)\s+(\d+)\/(\w+)\s+(\d{2}:\d{2})/);
+        const result = await collections.updateMany(
+          { paymentId: paymentId },
+          { $set: { available: false, payed: "Swish" } }
+        );
+        console.log("Booking update result:", result);
 
-        if (mainBookingMatch) {
-          const [_, category, day, month, time] = mainBookingMatch;
-          const year = new Date().getFullYear(); // Current year
-
-          console.log('Parsed booking details:', {
-            category: category.trim(),
-            day,
-            month,
-            time,
-            year
-          });
-
-          // Update the booking in database
-          const result = await collections.updateOne(
-            {
-              timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}`
-            },
-            {
-              $set: {
-                available: false,
-                payed: "Swish",
-                paymentId: id,
-                number: payerAlias,
-                cost: parseInt(amount),
-                bookedBy: 'Pending'
-              }
-            }
-          );
-
-          try {
-            await axios.post('http://localhost:5173/payment-confirmation', {
-              status: 'success',
-              paymentId: id,
-              timeSlot: {
-                category: category.trim(),
-                day,
-                month,
-                time,
-                year
-              }
-            });
-          } catch (fetchError) {
-            console.error('Error sending confirmation to client:', fetchError);
-          }
-
-          console.log('Database update result:', result);
-
-        } else {
-          console.error('Failed to parse message:', message);
+        if (paymentStates[paymentId]) {
+          delete paymentStates[paymentId];
+          console.log("Payment terminated from paymentStates:", paymentId);
         }
+
       } catch (dbError) {
         console.error('Error updating booking:', dbError, {
           message,
