@@ -274,7 +274,7 @@ router.post("/eventCreated", async (req, res) => {
         
         break;
       default:
-        console.log("Unhandled event type:", event.event);
+        console.log("Unhandled event type:", event);
     }
 
     // Respond to the webhook request
