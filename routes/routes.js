@@ -949,6 +949,36 @@ router.patch("/checkout", async (req, res) => {
   }
 });
 
+router.delete("/checkout", async (req, res) => {
+  const { year, month, day, category, time } = req.body;
+  try {
+    const collections = db.collection("bookings");
+    
+    // Create the timeSlotId for finding the booking
+    const timeSlotId = `${year}-${month}-${day}-${category.trim()}-${time}`;
+    
+    // Delete the booking completely
+    const result = await collections.deleteOne({ timeSlotId: timeSlotId });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    // Broadcast the update to all connected clients
+    broadcast({ type: "timeUpdate", message: "Update" });
+
+    res.json({ 
+      message: "Booking deleted successfully",
+      timeSlotId: timeSlotId,
+      result 
+    });
+
+  } catch (error) {
+    console.error("Error deleting booking:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.patch("/changeTime", async (req, res) => {
   const { year, month, day, category, oldTime, newTime } = req.body;
 

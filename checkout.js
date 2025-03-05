@@ -41,7 +41,7 @@ wss.on("connection", (ws) => {
   ws.on("message", (message) => {
       console.log(`Received: ${message}`);
   });
-
+  
   // Handle errors
   ws.on("error", (err) => {
       console.error("WebSocket error:", err);
