@@ -36,6 +36,8 @@ async function run() {
       "info": null,
       "paymentId": null,
       "discount": 0,
+      "bookingRef": null,
+      "offer": null,
     };
 
     const times = ["09:30", "11:00", "12:30", "14:00", "15:30", "17:00", "18:30", "20:00", "21:30"];
@@ -98,6 +100,6 @@ async function run() {
 
 let db = client.db("Mintescaperoom");
 
-//run().catch(console.dir);
+run().catch(console.dir);
 
 export default db;
