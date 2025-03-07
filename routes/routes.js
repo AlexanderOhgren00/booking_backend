@@ -784,6 +784,102 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
   }
 });
 
+router.patch("/bulk-update-offers", async (req, res) => {
+  console.log("bulk-update-offers endpoint called with body:", req.body);
+  const { updates, offerValue } = req.body;
+
+  if (!updates || !Array.isArray(updates) || !offerValue) {
+    console.log("Validation failed:", { updates, offerValue });
+    return res.status(400).json({ error: "Updates array and offerValue are required" });
+  }
+
+  try {
+    const collections = db.collection("bookings");
+    const results = [];
+    const currentYear = new Date().getFullYear();
+    console.log("Starting offer update process with current year:", currentYear);
+
+    // Get all years from current year up to 2030
+    const years = Array.from(
+      { length: 2030 - currentYear + 1 },
+      (_, i) => currentYear + i
+    );
+
+    // Process each update
+    for (const update of updates) {
+      const { time, category, weekday, month } = update;
+      
+      if (!time || !category || weekday === undefined || !month) {
+        console.log("Skipping invalid update:", update);
+        continue;
+      }
+
+      console.log(`Processing update for ${category} at ${time} on weekday ${weekday} in month ${month}`);
+
+      // Find all matching bookings across years
+      for (const year of years) {
+        // Get all days in the specified month that match the weekday
+        const daysInMonth = new Date(year, month, 0).getDate();
+        const matchingDays = [];
+
+        for (let day = 1; day <= daysInMonth; day++) {
+          const date = new Date(year, month - 1, day);
+          // getDay() returns 0 for Sunday, 1 for Monday, etc.
+          // Adjust if your weekday numbering is different
+          if (date.getDay() === weekday) {
+            matchingDays.push(day);
+          }
+        }
+
+        console.log(`Found ${matchingDays.length} matching days in ${month}/${year} for weekday ${weekday}`);
+
+        // Update each matching day
+        for (const day of matchingDays) {
+          const timeSlotId = `${year}-${month}-${day}-${category.trim()}-${time}`;
+          
+          const updateResult = await collections.updateOne(
+            { timeSlotId: timeSlotId },
+            { $set: { discount: offerValue } }
+          );
+
+          if (updateResult.matchedCount > 0) {
+            results.push({
+              timeSlotId,
+              success: updateResult.modifiedCount > 0,
+              year,
+              month,
+              day,
+              category,
+              time,
+              discount: offerValue
+            });
+            
+            console.log(`Updated timeSlot: ${timeSlotId} with discount: ${offerValue}`);
+          } else {
+            console.log(`No matching booking found for timeSlot: ${timeSlotId}`);
+          }
+        }
+      }
+    }
+
+    // Broadcast the update via WebSocket
+    broadcast({
+      type: "bulkOfferUpdate",
+      data: { updates, offerValue }
+    });
+
+    res.json({
+      message: "Bulk offer update completed",
+      results,
+      modifiedCount: results.length
+    });
+
+  } catch (error) {
+    console.error("Error in bulk-update-offers:", error);
+    res.status(500).json({ error: "Server error while updating offers" });
+  }
+});
+
 router.delete("/deleteRoomDiscount", async (req, res) => {
   const { key } = req.body;
 
