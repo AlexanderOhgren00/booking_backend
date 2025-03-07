@@ -806,6 +806,12 @@ router.patch("/bulk-update-offers", async (req, res) => {
     console.log(`🔍 Starting offer update process with current year: ${currentYear}`);
     console.log(`📊 Update summary: ${updates.length} time slots, offer value: ${offerValue} SEK`);
 
+    // Month name to number mapping
+    const monthNameToNumber = {
+      "January": 1, "February": 2, "March": 3, "April": 4, "May": 5, "June": 6,
+      "July": 7, "August": 8, "September": 9, "October": 10, "November": 11, "December": 12
+    };
+
     // Get all years from current year up to 2030
     const years = Array.from(
       { length: 2030 - currentYear + 1 },
@@ -822,18 +828,27 @@ router.patch("/bulk-update-offers", async (req, res) => {
         continue;
       }
 
-      console.log(`🔄 Processing update for category: "${category}" at time: "${time}" on weekday: ${weekday} in month: ${month}`);
+      // Convert month name to number if needed
+      let monthNumber = month;
+      if (isNaN(month)) {
+        monthNumber = monthNameToNumber[month];
+        if (!monthNumber) {
+          console.log(`⚠️ Invalid month name: ${month}`);
+          continue;
+        }
+      }
+
+      console.log(`🔄 Processing update for category: "${category}" at time: "${time}" on weekday: ${weekday} in month: ${month} (${monthNumber})`);
 
       // Find all matching bookings across years
       for (const year of years) {
         // Get all days in the specified month that match the weekday
-        const daysInMonth = new Date(year, month, 0).getDate();
+        const daysInMonth = new Date(year, monthNumber, 0).getDate();
         const matchingDays = [];
 
         for (let day = 1; day <= daysInMonth; day++) {
-          const date = new Date(year, month - 1, day);
+          const date = new Date(year, monthNumber - 1, day);
           // getDay() returns 0 for Sunday, 1 for Monday, etc.
-          // Adjust if your weekday numbering is different
           if (date.getDay() === weekday) {
             matchingDays.push(day);
           }
@@ -843,18 +858,32 @@ router.patch("/bulk-update-offers", async (req, res) => {
 
         // Update each matching day
         for (const day of matchingDays) {
-          const timeSlotId = `${year}-${month}-${day}-${category.trim()}-${time}`;
+          // Try both formats: numeric month and month name
+          const timeSlotIdNumeric = `${year}-${monthNumber}-${day}-${category.trim()}-${time}`;
+          const timeSlotIdName = `${year}-${month}-${day}-${category.trim()}-${time}`;
           
-          console.log(`🔍 Looking for timeSlot: ${timeSlotId}`);
+          console.log(`🔍 Looking for timeSlot with numeric month: ${timeSlotIdNumeric}`);
+          console.log(`🔍 Looking for timeSlot with month name: ${timeSlotIdName}`);
           
-          const updateResult = await collections.updateOne(
-            { timeSlotId: timeSlotId },
-            { $set: { offer: offerValue } }
+          // First try with numeric month
+          let updateResult = await collections.updateOne(
+            { timeSlotId: timeSlotIdNumeric },
+            { $set: { discount: offerValue } }
           );
 
+          // If no match, try with month name
+          if (updateResult.matchedCount === 0) {
+            console.log(`⚠️ No match with numeric month, trying with month name`);
+            updateResult = await collections.updateOne(
+              { timeSlotId: timeSlotIdName },
+              { $set: { discount: offerValue } }
+            );
+          }
+
           if (updateResult.matchedCount > 0) {
+            const usedTimeSlotId = updateResult.matchedCount > 0 ? timeSlotIdName : timeSlotIdNumeric;
             results.push({
-              timeSlotId,
+              timeSlotId: usedTimeSlotId,
               success: updateResult.modifiedCount > 0,
               year,
               month,
@@ -864,9 +893,9 @@ router.patch("/bulk-update-offers", async (req, res) => {
               discount: offerValue
             });
             
-            console.log(`✅ Updated timeSlot: ${timeSlotId} with discount: ${offerValue} SEK (modified: ${updateResult.modifiedCount > 0 ? "YES" : "NO"})`);
+            console.log(`✅ Updated timeSlot: ${usedTimeSlotId} with discount: ${offerValue} SEK (modified: ${updateResult.modifiedCount > 0 ? "YES" : "NO"})`);
           } else {
-            console.log(`❌ No matching booking found for timeSlot: ${timeSlotId}`);
+            console.log(`❌ No matching booking found for either timeSlot format`);
           }
         }
       }
