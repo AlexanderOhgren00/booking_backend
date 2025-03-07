@@ -787,6 +787,8 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
 router.patch("/bulk-update-offers", async (req, res) => {
   console.log("bulk-update-offers endpoint called with body:", req.body);
   const { updates, offerValue } = req.body;
+  console.log("Updates:", updates);
+  console.log("Offer Value:", offerValue);
 
   if (!updates || !Array.isArray(updates) || !offerValue) {
     console.log("Validation failed:", { updates, offerValue });
