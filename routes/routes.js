@@ -785,38 +785,44 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
 });
 
 router.patch("/bulk-update-offers", async (req, res) => {
-  console.log("bulk-update-offers endpoint called with body:", req.body);
+  console.log("=== BULK UPDATE OFFERS ENDPOINT CALLED ===");
+  console.log("Request body:", JSON.stringify(req.body, null, 2));
+  console.log("Request IP:", req.ip);
+  console.log("Request timestamp:", new Date().toISOString());
+  
   const { updates, offerValue } = req.body;
-  console.log("Updates:", updates);
-  console.log("Offer Value:", offerValue);
 
   if (!updates || !Array.isArray(updates) || !offerValue) {
-    console.log("Validation failed:", { updates, offerValue });
+    console.log("❌ VALIDATION FAILED:", { updates, offerValue });
     return res.status(400).json({ error: "Updates array and offerValue are required" });
   }
+
+  console.log(`✅ Validation passed: ${updates.length} updates with offer value ${offerValue}`);
 
   try {
     const collections = db.collection("bookings");
     const results = [];
     const currentYear = new Date().getFullYear();
-    console.log("Starting offer update process with current year:", currentYear);
+    console.log(`🔍 Starting offer update process with current year: ${currentYear}`);
+    console.log(`📊 Update summary: ${updates.length} time slots, offer value: ${offerValue} SEK`);
 
     // Get all years from current year up to 2030
     const years = Array.from(
       { length: 2030 - currentYear + 1 },
       (_, i) => currentYear + i
     );
+    console.log(`📅 Years to process: ${years.join(", ")}`);
 
     // Process each update
     for (const update of updates) {
       const { time, category, weekday, month } = update;
       
       if (!time || !category || weekday === undefined || !month) {
-        console.log("Skipping invalid update:", update);
+        console.log(`⚠️ Skipping invalid update:`, JSON.stringify(update));
         continue;
       }
 
-      console.log(`Processing update for ${category} at ${time} on weekday ${weekday} in month ${month}`);
+      console.log(`🔄 Processing update for category: "${category}" at time: "${time}" on weekday: ${weekday} in month: ${month}`);
 
       // Find all matching bookings across years
       for (const year of years) {
@@ -833,15 +839,17 @@ router.patch("/bulk-update-offers", async (req, res) => {
           }
         }
 
-        console.log(`Found ${matchingDays.length} matching days in ${month}/${year} for weekday ${weekday}`);
+        console.log(`📆 Found ${matchingDays.length} matching days in ${month}/${year} for weekday ${weekday}: [${matchingDays.join(", ")}]`);
 
         // Update each matching day
         for (const day of matchingDays) {
           const timeSlotId = `${year}-${month}-${day}-${category.trim()}-${time}`;
           
+          console.log(`🔍 Looking for timeSlot: ${timeSlotId}`);
+          
           const updateResult = await collections.updateOne(
             { timeSlotId: timeSlotId },
-            { $set: { discount: offerValue } }
+            { $set: { offer: offerValue } }
           );
 
           if (updateResult.matchedCount > 0) {
@@ -856,20 +864,24 @@ router.patch("/bulk-update-offers", async (req, res) => {
               discount: offerValue
             });
             
-            console.log(`Updated timeSlot: ${timeSlotId} with discount: ${offerValue}`);
+            console.log(`✅ Updated timeSlot: ${timeSlotId} with discount: ${offerValue} SEK (modified: ${updateResult.modifiedCount > 0 ? "YES" : "NO"})`);
           } else {
-            console.log(`No matching booking found for timeSlot: ${timeSlotId}`);
+            console.log(`❌ No matching booking found for timeSlot: ${timeSlotId}`);
           }
         }
       }
     }
 
+    console.log(`📊 Update summary: ${results.length} time slots updated out of ${updates.length} requested`);
+
     // Broadcast the update via WebSocket
+    console.log(`📡 Broadcasting update to connected clients`);
     broadcast({
       type: "bulkOfferUpdate",
       data: { updates, offerValue }
     });
 
+    console.log(`✅ Bulk offer update completed successfully`);
     res.json({
       message: "Bulk offer update completed",
       results,
@@ -877,7 +889,8 @@ router.patch("/bulk-update-offers", async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error in bulk-update-offers:", error);
+    console.error("❌ ERROR in bulk-update-offers:", error);
+    console.error("Stack trace:", error.stack);
     res.status(500).json({ error: "Server error while updating offers" });
   }
 });
