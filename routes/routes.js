@@ -1779,7 +1779,7 @@ router.post('/send-confirmation', async (req, res) => {
                           <p style="
                               margin: 0;
                               color: rgb(160, 160, 160);
-                          ">Bokningsnummer: ${bookingDetails.paymentId}</p>
+                          ">Bokningsnummer: ${bookingDetails.bookingRef}</p>
                           <p style="
                               margin: 0;
                               color: rgb(160, 160, 160);
