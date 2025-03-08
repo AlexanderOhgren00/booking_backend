@@ -868,7 +868,7 @@ router.patch("/bulk-update-offers", async (req, res) => {
           // First try with numeric month
           let updateResult = await collections.updateOne(
             { timeSlotId: timeSlotIdNumeric },
-            { $set: { discount: offerValue } }
+            { $set: { offer: offerValue } }
           );
 
           // If no match, try with month name
@@ -876,7 +876,7 @@ router.patch("/bulk-update-offers", async (req, res) => {
             console.log(`⚠️ No match with numeric month, trying with month name`);
             updateResult = await collections.updateOne(
               { timeSlotId: timeSlotIdName },
-              { $set: { discount: offerValue } }
+              { $set: { offer: offerValue } }
             );
           }
 
@@ -890,7 +890,7 @@ router.patch("/bulk-update-offers", async (req, res) => {
               day,
               category,
               time,
-              discount: offerValue
+              offer: offerValue
             });
             
             console.log(`✅ Updated timeSlot: ${usedTimeSlotId} with discount: ${offerValue} SEK (modified: ${updateResult.modifiedCount > 0 ? "YES" : "NO"})`);
