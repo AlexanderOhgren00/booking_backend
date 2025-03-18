@@ -2117,6 +2117,47 @@ router.post('/send-confirmation', async (req, res) => {
   }
 });
 
+router.post("/reset-all-offers", async (req, res) => {
+  console.log("=== RESET ALL OFFERS ENDPOINT CALLED ===");
+  console.log("Request timestamp:", new Date().toISOString());
+  console.log("Request IP:", req.ip);
+  
+  try {
+    const collections = db.collection("bookings");
+    
+    // Update all bookings to reset the offer field
+    const result = await collections.updateMany(
+      {}, // empty filter to match all documents
+      { $set: { offer: null } }
+    );
+    
+    console.log(`✅ Reset offers for ${result.modifiedCount} bookings out of ${result.matchedCount} total`);
+    
+    // Broadcast the update via WebSocket to notify all clients
+    broadcast({
+      type: "offersReset",
+      message: "All offers have been reset"
+    });
+    console.log("📡 Broadcast sent to notify clients of offer reset");
+    
+    res.status(200).json({
+      success: true,
+      message: "All offers have been reset",
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount
+    });
+    
+  } catch (error) {
+    console.error("❌ ERROR in reset-all-offers:", error);
+    console.error("Stack trace:", error.stack);
+    res.status(500).json({
+      success: false,
+      error: "Server error while resetting offers",
+      message: error.message
+    });
+  }
+});
+
 export default router;
 
 // const order = {
