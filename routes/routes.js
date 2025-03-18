@@ -121,16 +121,61 @@ async function cleanUpPaymentStates() {
 setInterval(cleanUpPaymentStates, 300 * 1000);
 
 router.post("/checkPaymentStates", async (req, res) => {
-  const { paymentId } = req.body;
-  const paymentState = paymentStates[paymentId];
-  if (paymentState) {
-    res.json({
-      status: "active",
-      data: paymentState
-    });
-  } else {
-    res.json({
-      status: "inactive"
+  try {
+    const { timeSlotId } = req.body;
+    
+    if (!timeSlotId) {
+      return res.status(400).json({ error: "timeSlotId is required" });
+    }
+
+    console.log(`Checking payment status for timeSlotId: ${timeSlotId}`);
+    
+    // First, look up the booking in the bookings collection to get its paymentId
+    const collections = db.collection("bookings");
+    const booking = await collections.findOne({ timeSlotId: timeSlotId });
+    
+    if (!booking) {
+      console.log(`No booking found for timeSlotId: ${timeSlotId}`);
+      return res.json({
+        status: "not_found",
+        message: "No booking found with this timeSlotId"
+      });
+    }
+    
+    // Check if the booking has a paymentId
+    if (!booking.paymentId) {
+      console.log(`Booking found for timeSlotId: ${timeSlotId}, but it has no paymentId`);
+      return res.json({
+        status: "no_payment",
+        message: "Booking exists but has no associated payment"
+      });
+    }
+    
+    // Now check if this paymentId is in the paymentStates
+    const paymentId = booking.paymentId;
+    const paymentState = paymentStates[paymentId];
+    
+    if (paymentState) {
+      console.log(`Active payment found for timeSlotId: ${timeSlotId}, paymentId: ${paymentId}`);
+      return res.json({
+        status: "active",
+        paymentId: paymentId,
+        data: paymentState
+      });
+    } else {
+      console.log(`Payment ${paymentId} not found in paymentStates for timeSlotId: ${timeSlotId}`);
+      return res.json({
+        status: "inactive",
+        paymentId: paymentId,
+        message: "Payment exists but is not in pending state"
+      });
+    }
+  } catch (error) {
+    console.error(`Error checking payment states:`, error);
+    res.status(500).json({
+      status: "error",
+      message: "Server error while checking payment state",
+      error: error.message
     });
   }
 });
