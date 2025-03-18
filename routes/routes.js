@@ -120,6 +120,21 @@ async function cleanUpPaymentStates() {
 
 setInterval(cleanUpPaymentStates, 300 * 1000);
 
+router.post("/checkPaymentStates", async (req, res) => {
+  const { paymentId } = req.body;
+  const paymentState = paymentStates[paymentId];
+  if (paymentState) {
+    res.json({
+      status: "active",
+      data: paymentState
+    });
+  } else {
+    res.json({
+      status: "inactive"
+    });
+  }
+});
+
 router.post("/v1/payments", async (req, res) => {
   try {
     const product = req.body;
