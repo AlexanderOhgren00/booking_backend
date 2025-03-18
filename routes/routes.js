@@ -49,42 +49,71 @@ function broadcast(data) {
 async function cleanUpPaymentStates() {
   const currentDate = new Date();
   console.log("Cleaning up payment states...", paymentStates);
-  const collections = db.collection("years");
+  const collections = db.collection("bookings");
 
   for (const paymentId in paymentStates) {
     const paymentDate = new Date(paymentStates[paymentId].date);
     const timeDifference = (currentDate - paymentDate) / 1000 / 60;
 
     if (timeDifference > 5) {
+      console.log(`Payment ${paymentId} expired (${timeDifference.toFixed(2)} minutes old)`);
+      
       for (const item of paymentStates[paymentId].data) {
-        await collections.updateOne(
-          { "year": item.year, "months.month": item.month, "months.days.day": item.day, "months.days.categories.name": item.category, "months.days.categories.times.time": item.time },
+        // Create timeSlotId from booking data
+        const timeSlotId = `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`;
+        
+        console.log(`Resetting booking with timeSlotId: ${timeSlotId}`);
+        
+        // Update the booking directly using timeSlotId
+        const updateResult = await collections.updateOne(
+          { timeSlotId: timeSlotId },
           {
             $set: {
-              "months.$[month].days.$[day].categories.$[category].times.$[time].available": true,
-              "months.$[month].days.$[day].categories.$[category].times.$[time].players": 0,
-              "months.$[month].days.$[day].categories.$[category].times.$[time].payed": null,
-              "months.$[month].days.$[day].categories.$[category].times.$[time].cost": 0,
-              "months.$[month].days.$[day].categories.$[category].times.$[time].bookedBy": null,
-              "months.$[month].days.$[day].categories.$[category].times.$[time].number": null,
-              "months.$[month].days.$[day].categories.$[category].times.$[time].email": null,
-              "months.$[month].days.$[day].categories.$[category].times.$[time].info": null,
-              "months.$[month].days.$[day].categories.$[category].times.$[time].paymentId": null
+              available: true,
+              players: 0,
+              payed: null,
+              cost: 0,
+              bookedBy: null,
+              number: null,
+              email: null,
+              info: null,
+              paymentId: null,
+              discount: null
             }
-          },
-          { arrayFilters: [{ "month.month": item.month }, { "day.day": item.day }, { "category.name": item.category }, { "time.time": item.time }] }
+          }
         );
-        console.log("Payment state cleaned up:", item);
+        
+        console.log(`Reset result: matched=${updateResult.matchedCount}, modified=${updateResult.modifiedCount}`);
       }
-      const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": key,
-        },
+      
+      // Terminate the payment on the payment provider
+      try {
+        const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": key,
+          },
+        });
+        
+        if (response.ok) {
+          console.log(`Payment ${paymentId} terminated successfully on payment provider`);
+        } else {
+          console.error(`Failed to terminate payment ${paymentId} on provider:`, await response.text());
+        }
+      } catch (error) {
+        console.error(`Error terminating payment ${paymentId}:`, error);
+      }
+      
+      // Remove from paymentStates
+      delete paymentStates[paymentId];
+      console.log(`Removed payment ${paymentId} from paymentStates`);
+      
+      // Broadcast update to all clients
+      broadcast({
+        type: "timeUpdate",
+        message: "Expired payment slots reset"
       });
-      const data = { message: "Payment terminated", paymentId };
-      console.log(data);
     }
   }
 }
