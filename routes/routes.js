@@ -925,18 +925,32 @@ router.patch("/bulk-update-offers", async (req, res) => {
 });
 
 router.delete("/deleteRoomDiscount", async (req, res) => {
-  const { key } = req.body;
+  const { key, PersonCost } = req.body;
 
   if (!key) {
     return res.status(400).json({ error: "Discount key is required" });
   }
 
   try {
+    // Delete from roomDiscounts collection
     const collections = db.collection("roomDiscounts");
     const result = await collections.deleteOne({ key });
 
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "Discount not found" });
+    }
+
+    // Reset discount to 0 for any bookings with this discount value
+    if (PersonCost) {
+      console.log(`Resetting discount to 0 for bookings with discount = ${PersonCost}`);
+      
+      const bookingsCollection = db.collection("bookings");
+      const bookingUpdateResult = await bookingsCollection.updateMany(
+        { discount: PersonCost },
+        { $set: { discount: 0 } }
+      );
+      
+      console.log(`Updated ${bookingUpdateResult.modifiedCount} bookings with discount ${PersonCost} to 0`);
     }
 
     res.status(200).json({ message: "Discount deleted" });
