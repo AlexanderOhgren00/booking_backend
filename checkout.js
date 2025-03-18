@@ -28,7 +28,7 @@ const PORT = process.env.PORT || 3000;
 
 const corsOptions = {
     // Temporarily allow all origins for testing
-    origin: '*', 
+    origin: ['*', "http://localhost:5173", "http://localhost:5174", "http://89.46.83.171", "https://89.46.83.171", "http://77.81.6.112", "http://103.57.74.103", "https://103.57.74.103"], 
     // When reverting to specific origins, include:
      //origin: [
          //"http://localhost:5173",
