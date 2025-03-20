@@ -323,22 +323,76 @@ router.post("/eventCreated", async (req, res) => {
         console.log("PAYMENT ID:", paymentId);
         const amount = orderData.amount.amount;
 
-        const chargeResponse = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": key,
-          },
-          body: JSON.stringify(
-            {
-              amount: amount,
-            }
-          )
+        // Log the charge request details
+        console.log("===== CHARGE REQUEST DETAILS =====");
+        console.log("Endpoint:", `https://test.api.dibspayment.eu/v1/payments/${paymentId}/charges`);
+        console.log("Method: POST");
+        console.log("Headers:", {
+          "Content-Type": "application/json",
+          "Authorization": `${key.substring(0, 5)}...${key.substring(key.length - 5)}` // Log partial key for security
         });
+        console.log("Payload:", JSON.stringify({ amount: amount }, null, 2));
+        
+        try {
+          console.log("Attempting to charge payment...");
+          const chargeResponse = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": key,
+            },
+            body: JSON.stringify(
+              {
+                amount: amount,
+              }
+            )
+          });
 
-        const chargeData = await chargeResponse.json();
-        console.log("CHARGERESPONSE:", chargeData);
-
+          // Log response status before parsing JSON
+          console.log("Charge response status:", chargeResponse.status);
+          console.log("Charge response statusText:", chargeResponse.statusText);
+          
+          // Log all response headers
+          const headers = {};
+          chargeResponse.headers.forEach((value, name) => {
+            headers[name] = value;
+          });
+          console.log("Charge response headers:", headers);
+          
+          // Get response body as text first for debugging
+          const responseText = await chargeResponse.text();
+          console.log("Charge response raw text:", responseText);
+          
+          let chargeData;
+          try {
+            // Parse JSON if possible
+            chargeData = JSON.parse(responseText);
+            console.log("Charge response parsed JSON:", chargeData);
+          } catch (parseError) {
+            console.error("Failed to parse charge response as JSON:", parseError);
+            chargeData = { error: "Invalid JSON response", rawResponse: responseText };
+          }
+          
+          // Check if charge was successful
+          if (chargeResponse.ok) {
+            console.log("✅ Charge successful:", {
+              paymentId,
+              amount,
+              chargeId: chargeData.chargeId
+            });
+          } else {
+            console.error("❌ Charge failed:", {
+              status: chargeResponse.status,
+              statusText: chargeResponse.statusText,
+              error: chargeData.error || "Unknown error",
+              details: chargeData
+            });
+          }
+        } catch (error) {
+          console.error("❌ Exception during charge request:", error);
+          console.error("Error stack:", error.stack);
+        }
+        
         // Update all bookings with this paymentId in database
         const collections = db.collection("bookings");
         const result = await collections.updateMany(
