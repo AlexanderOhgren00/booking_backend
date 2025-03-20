@@ -320,6 +320,7 @@ router.post("/eventCreated", async (req, res) => {
           orderItems: orderData.orderItems
         });
 
+        console.log("PAYMENT ID:", paymentId);
         const amount = orderData.amount.amount;
 
         const chargeResponse = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
