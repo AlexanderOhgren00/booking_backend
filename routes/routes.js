@@ -336,7 +336,7 @@ router.post("/eventCreated", async (req, res) => {
         });
 
         const chargeData = await chargeResponse.json();
-        console.log("Charge response:", chargeData);
+        console.log("CHARGERESPONSE:", chargeData);
 
         // Update all bookings with this paymentId in database
         const collections = db.collection("bookings");
@@ -358,24 +358,6 @@ router.post("/eventCreated", async (req, res) => {
         // Get the updated bookings to send customer info
         const updatedBookings = await collections.find({ paymentId: paymentId }).toArray();
         
-        // Notify client about successful payment
-        try {
-          await axios.post('https://mint-escape-room.vercel.app/payment-confirmation', {
-            status: 'success',
-            paymentId: paymentId,
-            type: 'nets',
-            bookings: updatedBookings.map(booking => ({
-              timeSlotId: booking.timeSlotId,
-              bookedBy: booking.bookedBy,
-              email: booking.email,
-              players: booking.players
-            }))
-          });
-        } catch (clientError) {
-          console.error('Error notifying client:', clientError);
-        }
-
-        // Terminate payment in paymentStates
         if (paymentStates[paymentId]) {
           delete paymentStates[paymentId];
           console.log("Payment terminated from paymentStates:", paymentId);
