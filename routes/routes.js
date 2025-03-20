@@ -305,7 +305,7 @@ router.post("/eventCreated", async (req, res) => {
 
     // Process the event based on the event type
     switch (event.event) {
-      case "payment.created":
+      case "payment.checkout.completed":
         // Handle payment created event
         console.log("Payment created event:", event.data);
         
