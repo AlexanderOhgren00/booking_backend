@@ -1520,7 +1520,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     });
 
     const response = await client.put(
-      `https://staging.getswish.pub.tds.tieto.com/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
+      `https://cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
       paymentData,
       {
         headers: {
@@ -1546,7 +1546,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     if (!isMobile && response.status === 201) {
       try {
         const statusResponse = await client.post(
-          `https://staging.getswish.pub.tds.tieto.com/qrg-swish/api/v1/commerce`,
+          `https://cpc.getswish.net/qrg-swish/api/v1/commerce`,
           {
             token: response.headers.location,
             format: "svg",
