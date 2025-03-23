@@ -1511,7 +1511,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     };
 
     if (!isMobile && payerAlias) {
-      paymentData.payerAlias = payerAlias;
+      paymentData.payerAlias = payerAlias.startsWith('0') ? '46' + payerAlias.slice(1) : payerAlias;
     }
 
     console.log('Making Swish request:', {
