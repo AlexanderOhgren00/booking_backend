@@ -88,7 +88,7 @@ async function cleanUpPaymentStates() {
       
       // Terminate the payment on the payment provider
       try {
-        const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
+        const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
@@ -183,7 +183,7 @@ router.post("/checkPaymentStates", async (req, res) => {
 router.post("/v1/payments", async (req, res) => {
   try {
     const product = req.body;
-    const response = await fetch("https://test.api.dibspayment.eu/v1/payments", {
+    const response = await fetch("https://api.dibspayment.eu/v1/payments", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -244,7 +244,7 @@ router.post("/send-paylink", async (req, res) => {
     const { order, email } = req.body;
 
     // Create payment request
-    const paymentResponse = await fetch("https://test.api.dibspayment.eu/v1/payments", {
+    const paymentResponse = await fetch("https://api.dibspayment.eu/v1/payments", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -324,7 +324,7 @@ router.post("/eventCreated", async (req, res) => {
         const amount = orderData.amount.amount;
 
         // Charge the payment
-        const chargeResponse = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
+        const chargeResponse = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -381,7 +381,7 @@ router.post("/eventCreated", async (req, res) => {
 router.get("/v1/payments/:paymentId", async (req, res) => {
   try {
     const paymentId = req.params.paymentId;
-    const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}`, {
+    const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -401,7 +401,7 @@ router.post("/v1/payments/:paymentId/refunds", async (req, res) => {
   try {
     const paymentId = req.params.paymentId;
     console.log("Payment ID:", paymentId);
-    const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/refunds`, {
+    const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/refunds`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -423,7 +423,7 @@ router.post("/v1/payments/:paymentId/charges", async (req, res) => {
   try {
     const paymentId = req.params.paymentId;
     console.log("Payment ID:", paymentId);
-    const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
+    const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -444,7 +444,7 @@ router.post("/v1/payments/:paymentId/charges", async (req, res) => {
 router.put("/v1/payments/:paymentId/terminate", async (req, res) => {
   try {
     const paymentId = req.params.paymentId;
-    const response = await fetch(`https://test.api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
+    const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
