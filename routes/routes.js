@@ -1503,7 +1503,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     let paymentData = {
       payeePaymentReference: instructionUUID,
       callbackUrl: 'https://mintbackend-0066444807ba.herokuapp.com/swish/callback',
-      payeeAlias: '1230606301',
+      payeeAlias: '1230047647',
       amount: amount,
       currency: 'SEK',
       message: message,
