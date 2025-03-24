@@ -1546,7 +1546,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     if (!isMobile && response.status === 201) {
       try {
         const statusResponse = await client.post(
-          `https://cpc.getswish.net/qrg-swish/api/v1/commerce`,
+          `https://mpc.getswish.net/qrg-swish/api/v1/commerce`,
           {
             token: response.headers.location,
             format: "svg",
