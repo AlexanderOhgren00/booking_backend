@@ -80,7 +80,7 @@ wss.on("connection", (ws) => {
 });
 
 app.set('wss', wss);
-app.use(timeout("10s"));
+app.use(timeout("20s"));
 app.use(sslRedirect());
 app.use(cors(corsOptions));
 app.use(helmet());

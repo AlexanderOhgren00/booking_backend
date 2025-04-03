@@ -101,5 +101,6 @@ async function run() {
 let db = client.db("Mintescaperoom");
 
 //run().catch(console.dir);
+//mongodb+srv://alexanderneurasite:vrLUEvVaSHgWkabl@cluster0.0zreakw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
 
 export default db;
