@@ -180,6 +180,13 @@ router.post("/checkPaymentStates", async (req, res) => {
   }
 });
 
+router.patch("/bulkBaseCost", async (req, res) => {
+  const { baseCost } = req.body;
+  const collections = db.collection("bookings");
+  const result = await collections.updateMany({}, { $set: { baseCost } });
+  res.json({ message: "Base cost updated", result });
+});
+
 router.post("/v1/payments", async (req, res) => {
   try {
     const product = req.body;
