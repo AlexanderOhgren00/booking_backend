@@ -38,6 +38,7 @@ async function run() {
       "discount": 0,
       "bookingRef": null,
       "offer": null,
+      "baseCost": 850,
     };
 
     const times = ["09:30", "11:00", "12:30", "14:00", "15:30", "17:00", "18:30", "20:00", "21:30"];
@@ -100,7 +101,7 @@ async function run() {
 
 let db = client.db("Mintescaperoom");
 
-//run().catch(console.dir);
+run().catch(console.dir);
 //mongodb+srv://alexanderneurasite:vrLUEvVaSHgWkabl@cluster0.0zreakw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
 
 export default db;
