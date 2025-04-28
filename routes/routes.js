@@ -424,7 +424,7 @@ router.post("/v1/payments/:paymentId/refunds", async (req, res) => {
     console.error(error);
     res.status(500).json({ error: error.message });
   }
-})
+});
 
 router.post("/v1/payments/:paymentId/charges", async (req, res) => {
   try {
@@ -1513,10 +1513,10 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       payeeAlias: '1230047647',
       amount: amount,
       currency: 'SEK',
-      message: message,
-      payerAlias: undefined
+      message: message
     };
 
+    // Only add payerAlias for non-mobile payments
     if (!isMobile && payerAlias) {
       paymentData.payerAlias = payerAlias.startsWith('0') ? '46' + payerAlias.slice(1) : payerAlias;
     }
