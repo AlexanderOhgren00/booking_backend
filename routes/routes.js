@@ -1488,6 +1488,10 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     const { instructionUUID } = req.params;
     const { payerAlias, amount, message, isMobile } = req.body;
 
+    console.log('=== Swish Payment Request ===');
+    console.log('Request params:', { instructionUUID });
+    console.log('Request body:', { payerAlias, amount, message, isMobile });
+
     // Load certificates
     const cert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
     const key = fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), 'utf8');
@@ -1501,9 +1505,6 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       rejectUnauthorized: false
     });
 
-    // Set payerAlias only if it's not a mobile payment
-
-
     const client = axios.create({ httpsAgent });
 
     // Base payment data
@@ -1516,15 +1517,16 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       message: message
     };
 
+    console.log('Initial payment data:', paymentData);
+
     // Only add payerAlias for non-mobile payments
     if (!isMobile && payerAlias) {
       paymentData.payerAlias = payerAlias.startsWith('0') ? '46' + payerAlias.slice(1) : payerAlias;
+      console.log('Added payerAlias for non-mobile payment:', paymentData.payerAlias);
     }
 
-    console.log('Making Swish request:', {
-      type: isMobile ? 'Mobile payment' : 'QR code payment',
-      paymentData
-    });
+    console.log('Final payment data:', paymentData);
+    console.log('Making Swish request to:', `https://cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`);
 
     const response = await client.put(
       `https://cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
@@ -1536,6 +1538,13 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
         validateStatus: false
       }
     );
+
+    console.log('Swish API Response:', {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      data: response.data
+    });
 
     // Add detailed logging for 422 errors
     if (response.status === 422) {
@@ -1551,6 +1560,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
 
     // For QR code payments, make an additional request to get payment status
     if (!isMobile && response.status === 201) {
+      console.log('Making QR code status request...');
       try {
         const statusResponse = await client.post(
           `https://mpc.getswish.net/qrg-swish/api/v1/commerce`,
@@ -1567,6 +1577,11 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
           }
         );
 
+        console.log('QR code status response:', {
+          status: statusResponse.status,
+          data: statusResponse.data
+        });
+
         return res.status(response.status).json({
           status: response.status,
           paymentRequestToken: response.headers.location,
@@ -1575,11 +1590,18 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
           paymentStatus: statusResponse.data
         });
       } catch (statusError) {
-        console.error('Error fetching payment status:', statusError);
+        console.error('Error fetching QR code status:', statusError);
       }
     }
 
     // For mobile payments or if status fetch fails
+    console.log('Sending final response:', {
+      status: response.status,
+      paymentRequestToken: response.headers.location,
+      instructionUUID,
+      paymentType: isMobile ? 'mobile' : 'qr'
+    });
+
     res.status(response.status).json({
       status: response.status,
       paymentRequestToken: response.headers.location,
@@ -1588,11 +1610,13 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error processing Swish payment:', {
+    console.error('=== Swish Payment Error ===');
+    console.error('Error details:', {
       message: error.message,
       code: error.code,
       response: error.response?.data,
-      status: error.response?.status
+      status: error.response?.status,
+      stack: error.stack
     });
     res.status(500).json({
       error: 'Payment processing error',
