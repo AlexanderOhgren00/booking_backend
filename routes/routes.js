@@ -1514,17 +1514,11 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       payeeAlias: '1230047647',
       amount: amount,
       currency: 'SEK',
-      message: message
+      message: message,
+      payerAlias: payerAlias.startsWith('0') ? '46' + payerAlias.slice(1) : payerAlias
     };
 
     console.log('Initial payment data:', paymentData);
-
-    // Only add payerAlias for non-mobile payments
-    if (!isMobile && payerAlias) {
-      paymentData.payerAlias = payerAlias.startsWith('0') ? '46' + payerAlias.slice(1) : payerAlias;
-      console.log('Added payerAlias for non-mobile payment:', paymentData.payerAlias);
-    }
-
     console.log('Final payment data:', paymentData);
     console.log('Making Swish request to:', `https://cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`);
 
