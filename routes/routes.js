@@ -57,13 +57,13 @@ async function cleanUpPaymentStates() {
 
     if (timeDifference > 5) {
       console.log(`Payment ${paymentId} expired (${timeDifference.toFixed(2)} minutes old)`);
-      
+
       for (const item of paymentStates[paymentId].data) {
         // Create timeSlotId from booking data
         const timeSlotId = `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`;
-        
+
         console.log(`Resetting booking with timeSlotId: ${timeSlotId}`);
-        
+
         // Update the booking directly using timeSlotId
         const updateResult = await collections.updateOne(
           { timeSlotId: timeSlotId },
@@ -82,10 +82,10 @@ async function cleanUpPaymentStates() {
             }
           }
         );
-        
+
         console.log(`Reset result: matched=${updateResult.matchedCount}, modified=${updateResult.modifiedCount}`);
       }
-      
+
       // Terminate the payment on the payment provider
       try {
         const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
@@ -95,7 +95,7 @@ async function cleanUpPaymentStates() {
             "Authorization": key,
           },
         });
-        
+
         if (response.ok) {
           console.log(`Payment ${paymentId} terminated successfully on payment provider`);
         } else {
@@ -104,11 +104,11 @@ async function cleanUpPaymentStates() {
       } catch (error) {
         console.error(`Error terminating payment ${paymentId}:`, error);
       }
-      
+
       // Remove from paymentStates
       delete paymentStates[paymentId];
       console.log(`Removed payment ${paymentId} from paymentStates`);
-      
+
       // Broadcast update to all clients
       broadcast({
         type: "timeUpdate",
@@ -123,17 +123,17 @@ setInterval(cleanUpPaymentStates, 300 * 1000);
 router.post("/checkPaymentStates", async (req, res) => {
   try {
     const { timeSlotId } = req.body;
-    
+
     if (!timeSlotId) {
       return res.status(400).json({ error: "timeSlotId is required" });
     }
 
     console.log(`Checking payment status for timeSlotId: ${timeSlotId}`);
-    
+
     // First, look up the booking in the bookings collection to get its paymentId
     const collections = db.collection("bookings");
     const booking = await collections.findOne({ timeSlotId: timeSlotId });
-    
+
     if (!booking) {
       console.log(`No booking found for timeSlotId: ${timeSlotId}`);
       return res.json({
@@ -141,7 +141,7 @@ router.post("/checkPaymentStates", async (req, res) => {
         message: "No booking found with this timeSlotId"
       });
     }
-    
+
     // Check if the booking has a paymentId
     if (!booking.paymentId) {
       console.log(`Booking found for timeSlotId: ${timeSlotId}, but it has no paymentId`);
@@ -150,11 +150,11 @@ router.post("/checkPaymentStates", async (req, res) => {
         message: "Booking exists but has no associated payment"
       });
     }
-    
+
     // Now check if this paymentId is in the paymentStates
     const paymentId = booking.paymentId;
     const paymentState = paymentStates[paymentId];
-    
+
     if (paymentState) {
       console.log(`Active payment found for timeSlotId: ${timeSlotId}, paymentId: ${paymentId}`);
       return res.json({
@@ -315,11 +315,11 @@ router.post("/eventCreated", async (req, res) => {
       case "payment.checkout.completed":
         // Handle payment created event
         console.log("Payment created event:", event.data);
-        
+
         // Extract order details
         const orderData = event.data.order;
         const paymentId = event.data.paymentId;
-        
+
         // Log the order details
         console.log("Order details:", {
           amount: orderData.amount.amount,
@@ -346,7 +346,7 @@ router.post("/eventCreated", async (req, res) => {
 
         const chargeData = await chargeResponse.json();
         console.log("Charge response:", chargeData);
-        
+
         // Update all bookings with this paymentId in database
         const collections = db.collection("bookings");
         const result = await collections.updateMany(
@@ -366,12 +366,12 @@ router.post("/eventCreated", async (req, res) => {
 
         // Get the updated bookings to send customer info
         const updatedBookings = await collections.find({ paymentId: paymentId }).toArray();
-        
+
         if (paymentStates[paymentId]) {
           delete paymentStates[paymentId];
           console.log("Payment terminated from paymentStates:", paymentId);
         }
-        
+
         break;
       default:
         console.log("Unhandled event type:", event);
@@ -869,7 +869,7 @@ router.patch("/bulk-update-offers", async (req, res) => {
   console.log("Request body:", JSON.stringify(req.body, null, 2));
   console.log("Request IP:", req.ip);
   console.log("Request timestamp:", new Date().toISOString());
-  
+
   const { updates, offerValue } = req.body;
 
   if (!updates || !Array.isArray(updates) || !offerValue) {
@@ -902,7 +902,7 @@ router.patch("/bulk-update-offers", async (req, res) => {
     // Process each update
     for (const update of updates) {
       const { time, category, weekday, month } = update;
-      
+
       if (!time || !category || weekday === undefined || !month) {
         console.log(`⚠️ Skipping invalid update:`, JSON.stringify(update));
         continue;
@@ -941,10 +941,10 @@ router.patch("/bulk-update-offers", async (req, res) => {
           // Try both formats: numeric month and month name
           const timeSlotIdNumeric = `${year}-${monthNumber}-${day}-${category.trim()}-${time}`;
           const timeSlotIdName = `${year}-${month}-${day}-${category.trim()}-${time}`;
-          
+
           console.log(`🔍 Looking for timeSlot with numeric month: ${timeSlotIdNumeric}`);
           console.log(`🔍 Looking for timeSlot with month name: ${timeSlotIdName}`);
-          
+
           // First try with numeric month
           let updateResult = await collections.updateOne(
             { timeSlotId: timeSlotIdNumeric },
@@ -972,7 +972,7 @@ router.patch("/bulk-update-offers", async (req, res) => {
               time,
               offer: offerValue
             });
-            
+
             console.log(`✅ Updated timeSlot: ${usedTimeSlotId} with discount: ${offerValue} SEK (modified: ${updateResult.modifiedCount > 0 ? "YES" : "NO"})`);
           } else {
             console.log(`❌ No matching booking found for either timeSlot format`);
@@ -1023,13 +1023,13 @@ router.delete("/deleteRoomDiscount", async (req, res) => {
     // Reset discount to 0 for any bookings with this discount value
     if (PersonCost) {
       console.log(`Resetting discount to 0 for bookings with discount = ${PersonCost}`);
-      
+
       const bookingsCollection = db.collection("bookings");
       const bookingUpdateResult = await bookingsCollection.updateMany(
         { discount: PersonCost },
         { $set: { discount: 0 } }
       );
-      
+
       console.log(`Updated ${bookingUpdateResult.modifiedCount} bookings with discount ${PersonCost} to 0`);
     }
 
@@ -1187,10 +1187,10 @@ router.delete("/checkout", async (req, res) => {
   const { year, month, day, category, time } = req.body;
   try {
     const collections = db.collection("bookings");
-    
+
     // Create the timeSlotId for finding the booking
     const timeSlotId = `${year}-${month}-${day}-${category.trim()}-${time}`;
-    
+
     // Delete the booking completely
     const result = await collections.deleteOne({ timeSlotId: timeSlotId });
 
@@ -1201,10 +1201,10 @@ router.delete("/checkout", async (req, res) => {
     // Broadcast the update to all connected clients
     broadcast({ type: "timeUpdate", message: "Update" });
 
-    res.json({ 
+    res.json({
       message: "Booking deleted successfully",
       timeSlotId: timeSlotId,
-      result 
+      result
     });
 
   } catch (error) {
@@ -1407,7 +1407,7 @@ router.post("/swish-payment-confirmation", async (req, res) => {
       status: "PAID"
     })
   }
-  
+
   res.json({
     status: "NOT PAID"
   })
@@ -1514,9 +1514,14 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       payeeAlias: '1230047647',
       amount: amount,
       currency: 'SEK',
-      message: message,
-      payerAlias: payerAlias.startsWith('0') ? '46' + payerAlias.slice(1) : payerAlias
+      message: message
     };
+
+    // Always add payerAlias if it exists and is a string
+    if (payerAlias && typeof payerAlias === 'string') {
+      paymentData.payerAlias = payerAlias.startsWith('0') ? '46' + payerAlias.slice(1) : payerAlias;
+      console.log('Added payerAlias:', paymentData.payerAlias);
+    }
 
     console.log('Initial payment data:', paymentData);
     console.log('Final payment data:', paymentData);
@@ -2130,32 +2135,32 @@ router.post("/reset-all-offers", async (req, res) => {
   console.log("=== RESET ALL OFFERS ENDPOINT CALLED ===");
   console.log("Request timestamp:", new Date().toISOString());
   console.log("Request IP:", req.ip);
-  
+
   try {
     const collections = db.collection("bookings");
-    
+
     // Update all bookings to reset the offer field
     const result = await collections.updateMany(
       {}, // empty filter to match all documents
       { $set: { offer: null } }
     );
-    
+
     console.log(`✅ Reset offers for ${result.modifiedCount} bookings out of ${result.matchedCount} total`);
-    
+
     // Broadcast the update via WebSocket to notify all clients
     broadcast({
       type: "offersReset",
       message: "All offers have been reset"
     });
     console.log("📡 Broadcast sent to notify clients of offer reset");
-    
+
     res.status(200).json({
       success: true,
       message: "All offers have been reset",
       matchedCount: result.matchedCount,
       modifiedCount: result.modifiedCount
     });
-    
+
   } catch (error) {
     console.error("❌ ERROR in reset-all-offers:", error);
     console.error("Stack trace:", error.stack);
