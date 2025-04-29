@@ -485,7 +485,11 @@ router.post("/login", loginLimiter, async (req, res) => {
   }
 
   try {
-    const user = await collections.findOne({ username })
+    // Use case-insensitive search with regex
+    const user = await collections.findOne({ 
+      username: { $regex: new RegExp(`^${username}$`, 'i') }
+    });
+    
     if (!user) {
       return res.status(401).json({ error: "Invalid username or password" });
     }
@@ -512,7 +516,6 @@ router.post("/login", loginLimiter, async (req, res) => {
     console.error(error);
     res.status(500).json({ error: error.message });
   }
-
 });
 
 function authenticateToken(req, res, next) {
