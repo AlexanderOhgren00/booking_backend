@@ -38,6 +38,7 @@ const corsOptions = {
         "http://77.81.6.112",
         "https://mintescaperoom.se",
         "https://www.mintescaperoom.se",
+        "https://admin.mintescaperoom.se/",
         /^http:\/\/89\.46\.83\.\d{1,3}$/,
         /^https:\/\/89\.46\.83\.\d{1,3}$/,
         /^http:\/\/103\.57\.74\.\d{1,3}$/,
