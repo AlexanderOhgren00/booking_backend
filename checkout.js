@@ -39,6 +39,7 @@ const corsOptions = {
         "https://mintescaperoom.se",
         "https://www.mintescaperoom.se",
         "https://admin.mintescaperoom.se/",
+        "https://admin.mintescaperoom.se/login",
         /^http:\/\/89\.46\.83\.\d{1,3}$/,
         /^https:\/\/89\.46\.83\.\d{1,3}$/,
         /^http:\/\/103\.57\.74\.\d{1,3}$/,
