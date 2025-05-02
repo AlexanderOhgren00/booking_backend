@@ -1658,19 +1658,6 @@ router.get("/search/bookings", async (req, res) => {
     }
 
     const result = await collections.find(query)
-      .project({
-        year: 1,
-        month: 1,
-        day: 1,
-        time: 1,
-        category: 1,
-        bookedBy: 1,
-        email: 1,
-        number: 1,
-        timeSlotId: 1,
-        paymentId: 1,
-        _id: 1
-      })
       .sort({ year: 1, month: 1, day: 1, time: 1 })
       .limit(20)
       .toArray();
