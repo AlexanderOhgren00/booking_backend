@@ -1645,7 +1645,7 @@ router.get("/search/bookings", async (req, res) => {
     // Check if searchTerm contains any numbers
     if (/\d/.test(searchTerm)) {
       // Search by paymentId
-      query.paymentId = {
+      query.bookingRef = {
         $regex: searchTerm,
         $options: 'i'
       };
