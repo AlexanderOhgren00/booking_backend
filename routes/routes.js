@@ -57,7 +57,7 @@ async function cleanUpPaymentStates() {
     const paymentDate = new Date(paymentStates[paymentId].date);
     const timeDifference = (currentDate - paymentDate) / 1000 / 60;
 
-    if (timeDifference > 5) {
+    if (timeDifference > 30) {
       console.log(`Payment ${paymentId} expired (${timeDifference.toFixed(2)} minutes old)`);
 
       for (const item of paymentStates[paymentId].data) {
@@ -68,7 +68,10 @@ async function cleanUpPaymentStates() {
 
         // Update the booking directly using timeSlotId
         const updateResult = await collections.updateOne(
-          { timeSlotId: timeSlotId },
+          { 
+            timeSlotId: timeSlotId,
+            available: "occupied"
+          },
           {
             $set: {
               available: true,
@@ -308,7 +311,7 @@ router.post("/send-paylink", async (req, res) => {
 router.post("/eventCreated", async (req, res) => {
   try {
     const event = req.body;
-
+    
     // Log the event for debugging purposes
     console.log("Webhook event received:", event);
 
