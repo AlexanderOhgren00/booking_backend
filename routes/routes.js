@@ -195,6 +195,7 @@ router.patch("/bulkBaseCost", async (req, res) => {
 router.post("/v1/payments", async (req, res) => {
   try {
     const product = req.body;
+    console.log(product, "product");
     const response = await fetch("https://api.dibspayment.eu/v1/payments", {
       method: "POST",
       headers: {
