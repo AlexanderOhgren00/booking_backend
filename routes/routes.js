@@ -1600,6 +1600,20 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
         errorCode: response.data?.errorCode,
         errorMessage: response.data?.errorMessage
       });
+      const cancelResponse = await client.patch(
+        `https://cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests/${existingPaymentId}`, 
+        [{
+          "op": "replace",
+          "path": "/status",
+          "value": "cancelled"
+        }],
+        {
+          headers: {
+            "Content-Type": "application/json-patch+json"
+          }
+        }
+      );
+      console.log(cancelResponse, "cancelResponse");
     }
 
     // For QR code payments, make an additional request to get payment status
