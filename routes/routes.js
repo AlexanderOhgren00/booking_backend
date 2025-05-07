@@ -235,6 +235,39 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       if (hasConflict) {
         delete paymentStates[existingPaymentId];
         console.log(`Removed conflicting payment state: ${existingPaymentId}`);
+        // Load certificates
+        const cert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
+        const key = fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), 'utf8');
+        const ca = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), 'utf8');
+
+        const httpsAgent = new https.Agent({
+          cert,
+          key,
+          ca,
+          minVersion: 'TLSv1.2',
+          rejectUnauthorized: false
+        });
+
+        const client = axios.create({ httpsAgent });
+        try {
+          console.log("Cancelling payment", existingPaymentId);
+          const cancelResponse = await client.patch(
+            `https://cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests/${existingPaymentId}`, 
+            [{
+              "op": "replace",
+              "path": "/status",
+              "value": "cancelled"
+            }],
+            {
+              headers: {
+                "Content-Type": "application/json-patch+json"
+              }
+            }
+          );
+          console.log(`Payment ${existingPaymentId} cancelled with status: ${cancelResponse.status}`);
+        } catch (error) {
+          console.error(`Error cancelling payment ${existingPaymentId}:`, error.message);
+        }
       }
     }
 
