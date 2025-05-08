@@ -66,6 +66,24 @@ async function cleanUpPaymentStates() {
 
         console.log(`Resetting booking with timeSlotId: ${timeSlotId}`);
 
+        // Find the booking to backup before updating
+        const bookingToBackup = await collections.findOne({ 
+          timeSlotId: timeSlotId,
+          available: "occupied"
+        });
+
+        // Create backup if booking exists
+        if (bookingToBackup) {
+          const backupCollection = db.collection("backup");
+          // Add timestamp and source info to the backup
+          await backupCollection.insertOne({
+            ...bookingToBackup,
+            backupCreatedAt: new Date(),
+            backupSource: "cleanUpPaymentStates"
+          });
+          console.log(`Backup created for timeSlotId: ${timeSlotId}`);
+        }
+
         // Update the booking directly using timeSlotId
         const updateResult = await collections.updateOne(
           { 
@@ -88,7 +106,6 @@ async function cleanUpPaymentStates() {
             }
           }
         );
-
         console.log(`Reset result: matched=${updateResult.matchedCount}, modified=${updateResult.modifiedCount}`);
       }
 
