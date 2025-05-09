@@ -203,6 +203,40 @@ router.post("/checkPaymentStates", async (req, res) => {
   }
 });
 
+router.get("/getRecentBookings", async (req, res) => {
+  try {
+    const collections = db.collection("bookings");
+    const backup = db.collection("backup");
+    
+    // Get recent bookings from the bookings collection (where available is false)
+    const recentBookings = await collections.find({ available: false })
+      .sort({ updatedAt: -1 })
+      .limit(10)
+      .toArray();
+    
+    // Get recent bookings from the backup collection
+    const recentBackups = await backup.find({})
+      .sort({ updatedAt: -1 })
+      .limit(10)
+      .toArray();
+    
+    // Merge both arrays and sort by updatedAt
+    const allRecentBookings = [...recentBookings, ...recentBackups]
+      .sort((a, b) => {
+        // Handle case when updatedAt might be missing
+        const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return timeB - timeA; // Sort descending (most recent first)
+      })
+      .slice(0, 10); // Take only the 10 most recent entries
+    
+    res.json(allRecentBookings);
+  } catch (error) {
+    console.error("Error fetching recent bookings:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.patch("/bulkBaseCost", async (req, res) => {
   const { baseCost } = req.body;
   const collections = db.collection("bookings");
