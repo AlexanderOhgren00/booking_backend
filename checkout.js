@@ -60,7 +60,6 @@ wss.on("connection", (ws) => {
 
   // Handle messages from clients
   ws.on("message", (message) => {
-      console.log(`Received: ${message}`);
   });
   
   // Handle errors
