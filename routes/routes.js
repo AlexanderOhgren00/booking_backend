@@ -50,12 +50,15 @@ function broadcast(data) {
 
 async function cleanUpPaymentStates() {
   const currentDate = new Date();
-  console.log("Cleaning up payment states...", paymentStates);
+  console.log("===== Starting cleanUpPaymentStates =====");
+  console.log("Current paymentStates:", Object.keys(paymentStates).length > 0 ? Object.keys(paymentStates) : "No payment states");
   const collections = db.collection("bookings");
 
   for (const paymentId in paymentStates) {
     const paymentDate = new Date(paymentStates[paymentId].date);
     const timeDifference = (currentDate - paymentDate) / 1000 / 60;
+
+    console.log(`Checking payment ${paymentId}, age: ${timeDifference.toFixed(2)} minutes`);
 
     if (timeDifference > 30) {
       console.log(`Payment ${paymentId} expired (${timeDifference.toFixed(2)} minutes old)`);
@@ -64,53 +67,88 @@ async function cleanUpPaymentStates() {
         // Create timeSlotId from booking data
         const timeSlotId = `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`;
 
-        console.log(`Resetting booking with timeSlotId: ${timeSlotId}`);
+        console.log(`Processing timeSlotId: ${timeSlotId} for reset`);
 
-        // Find the booking to backup before updating
-        const bookingToBackup = await collections.findOne({ 
-          timeSlotId: timeSlotId,
-          available: "occupied"
-        });
-
-        // Create backup if booking exists
-        if (bookingToBackup) {
-          const backupCollection = db.collection("backup");
-          // Add timestamp and source info to the backup
-          await backupCollection.insertOne({
-            ...bookingToBackup,
-            backupCreatedAt: new Date(),
-            backupSource: "cleanUpPaymentStates"
-          });
-          console.log(`Backup created for timeSlotId: ${timeSlotId}`);
-        }
-
-        // Update the booking directly using timeSlotId
-        const updateResult = await collections.updateOne(
-          { 
+        try {
+          // Find the booking to backup before updating
+          const bookingToBackup = await collections.findOne({ 
             timeSlotId: timeSlotId,
             available: "occupied"
-          },
-          {
-            $set: {
-              available: true,
-              players: 0,
-              payed: null,
-              cost: 0,
-              bookedBy: null,
-              number: null,
-              email: null,
-              info: null,
-              discount: null,
-              bookingRef: null,
-              updatedAt: new Date()
+          });
+
+          console.log(`Found booking to backup: ${bookingToBackup ? 'YES' : 'NO'} for timeSlotId: ${timeSlotId}`);
+
+          // Create backup if booking exists
+          if (bookingToBackup) {
+            const backupCollection = db.collection("backup");
+            try {
+              // Add timestamp and source info to the backup
+              await backupCollection.insertOne({
+                ...bookingToBackup,
+                backupCreatedAt: new Date(),
+                backupSource: "cleanUpPaymentStates"
+              });
+              console.log(`✅ Backup created successfully for timeSlotId: ${timeSlotId}`);
+            } catch (backupError) {
+              console.error(`❌ Error creating backup for timeSlotId: ${timeSlotId}:`, backupError);
             }
           }
-        );
-        console.log(`Reset result: matched=${updateResult.matchedCount}, modified=${updateResult.modifiedCount}`);
+
+          // Update the booking directly using timeSlotId
+          console.log(`Attempting to reset booking with timeSlotId: ${timeSlotId}`);
+          console.log(`Query conditions: { timeSlotId: "${timeSlotId}", available: "occupied" }`);
+          
+          const updateResult = await collections.updateOne(
+            { 
+              timeSlotId: timeSlotId,
+              available: "occupied"
+            },
+            {
+              $set: {
+                available: true,
+                players: 0,
+                payed: null,
+                cost: 0,
+                bookedBy: null,
+                number: null,
+                email: null,
+                info: null,
+                discount: null,
+                bookingRef: null,
+                updatedAt: new Date()
+              }
+            }
+          );
+          
+          console.log(`Update result details for ${timeSlotId}:`);
+          console.log(`- matchedCount: ${updateResult.matchedCount}`);
+          console.log(`- modifiedCount: ${updateResult.modifiedCount}`);
+          console.log(`- upsertedCount: ${updateResult.upsertedCount}`);
+          console.log(`- acknowledged: ${updateResult.acknowledged}`);
+          
+          if (updateResult.matchedCount === 0) {
+            console.log(`⚠️ No matching booking found for timeSlotId: ${timeSlotId}`);
+            // Try an alternative query to check if the booking exists in a different state
+            const bookingCheck = await collections.findOne({ timeSlotId: timeSlotId });
+            if (bookingCheck) {
+              console.log(`Found booking with different state: available=${bookingCheck.available}`);
+            } else {
+              console.log(`No booking found with timeSlotId: ${timeSlotId} at all`);
+            }
+          } else if (updateResult.modifiedCount === 0) {
+            console.log(`⚠️ Booking found but not modified for timeSlotId: ${timeSlotId}`);
+          } else {
+            console.log(`✅ Successfully reset booking for timeSlotId: ${timeSlotId}`);
+          }
+        } catch (updateError) {
+          console.error(`❌ Error processing booking reset for ${timeSlotId}:`, updateError);
+          console.error(`Error stack:`, updateError.stack);
+        }
       }
 
       // Terminate the payment on the payment provider
       try {
+        console.log(`Attempting to terminate payment ${paymentId} on payment provider`);
         const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
           method: "PUT",
           headers: {
@@ -120,25 +158,29 @@ async function cleanUpPaymentStates() {
         });
 
         if (response.ok) {
-          console.log(`Payment ${paymentId} terminated successfully on payment provider`);
+          console.log(`✅ Payment ${paymentId} terminated successfully on payment provider`);
         } else {
-          console.error(`Failed to terminate payment ${paymentId} on provider:`, await response.text());
+          console.error(`❌ Failed to terminate payment ${paymentId} on provider:`, await response.text());
         }
       } catch (error) {
-        console.error(`Error terminating payment ${paymentId}:`, error);
+        console.error(`❌ Error terminating payment ${paymentId}:`, error);
       }
 
       // Remove from paymentStates
+      console.log(`Removing payment ${paymentId} from paymentStates`);
       delete paymentStates[paymentId];
-      console.log(`Removed payment ${paymentId} from paymentStates`);
+      console.log(`✅ Removed payment ${paymentId} from paymentStates`);
+      console.log(`Current paymentStates after removal:`, Object.keys(paymentStates).length > 0 ? Object.keys(paymentStates) : "No payment states");
 
       // Broadcast update to all clients
       broadcast({
         type: "timeUpdate",
         message: "Expired payment slots reset"
       });
+      console.log(`Broadcasted update for reset slots`);
     }
   }
+  console.log("===== Finished cleanUpPaymentStates =====");
 }
 
 setInterval(cleanUpPaymentStates, 300 * 1000);
