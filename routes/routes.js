@@ -492,7 +492,8 @@ router.post("/eventCreated", async (req, res) => {
             $set: {
               available: false,
               payed: "Nets Easy",
-              updatedAt: new Date()
+              updatedAt: new Date(),
+              bookedAt: new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })
             }
           }
         );
@@ -1462,7 +1463,7 @@ router.patch("/checkout", async (req, res) => {
   try {
     const result = await db.collection("bookings").updateOne(
       { timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}` },
-      { $set: { ...updateData, updatedAt: new Date() } }
+      { $set: { ...updateData, updatedAt: new Date()} }
     );
     res.json(result);
     broadcast({ type: "timeUpdate", message: "Update" });
@@ -1740,7 +1741,7 @@ router.post("/swish/callback", async (req, res) => {
         // Update all bookings with this paymentId
         const result = await collections.updateMany(
           { paymentId: paymentId },
-          { $set: { available: false, payed: "Swish", updatedAt: new Date() } }
+          { $set: { available: false, payed: "Swish", updatedAt: new Date(), bookedAt: new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" }) } }
         );
         console.log("Booking update result:", result);
 
