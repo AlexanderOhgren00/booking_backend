@@ -316,15 +316,17 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
 
     for (const existingPaymentId in paymentStates) {
       const existingData = paymentStates[existingPaymentId].data;
+      console.log(existingData, "existingData");
       const hasConflict = body.combinedData.some(newItem =>
         existingData.some(existingItem =>
           existingItem.year === newItem.year &&
           existingItem.month === newItem.month &&
           existingItem.day === newItem.day &&
+          existingItem.category === newItem.category &&
           existingItem.time.time === newItem.time.time
         )
       );
-
+      console.log(hasConflict, "hasConflict");
       if (hasConflict) {
         delete paymentStates[existingPaymentId];
         console.log(`Removed conflicting payment state: ${existingPaymentId}`);
