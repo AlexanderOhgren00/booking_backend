@@ -2308,7 +2308,32 @@ router.get("/stats/daily-revenue/:year/:month", async (req, res) => {
 
 router.post("/edit-confirmation", async (req, res) => {
   try {
-    const { to, subject, bookingDetails } = req.body;
+    const { to, subject, bookingDetails, paymentId } = req.body;
+
+    // Fetch all bookings with the given paymentId
+    const collections = db.collection("bookings");
+    let bookings = [];
+    
+    if (paymentId) {
+      // If paymentId is provided, fetch bookings by paymentId
+      bookings = await collections.find({ paymentId: paymentId }).toArray();
+      console.log(`Found ${bookings.length} bookings for paymentId ${paymentId}`);
+    }
+    
+    // If no bookings found by paymentId or no paymentId provided, use the items from bookingDetails
+    const items = bookings.length > 0 
+      ? bookings.map(booking => ({
+          category: booking.category,
+          date: `${booking.day} ${booking.month} ${booking.year}`,
+          time: booking.time,
+          players: booking.players,
+          cost: booking.cost
+        }))
+      : bookingDetails.items;
+    
+    // Calculate total cost and tax based on the items
+    const totalCost = items.reduce((sum, item) => sum + (item.cost || 0), 0);
+    const tax = Math.round(totalCost * 0.20);
 
     // Create email HTML content
     const emailHtml = `
@@ -2360,7 +2385,7 @@ router.post("/edit-confirmation", async (req, res) => {
                   </div>
 
                   <div style="padding: 5px 10px;">
-                      ${bookingDetails.items.map(item => `
+                      ${items.map(item => `
                           <div style="
                               display: flex;
                               justify-content: space-between;
@@ -2404,7 +2429,7 @@ router.post("/edit-confirmation", async (req, res) => {
                           gap: 200px;
                       ">
                           <p style="margin: 0;">Moms</p>
-                          <p style="margin: 0;">SEK ${bookingDetails.tax}</p>
+                          <p style="margin: 0;">SEK ${tax}</p>
                       </div>
 
                       <div style="
@@ -2417,7 +2442,7 @@ router.post("/edit-confirmation", async (req, res) => {
                           gap: 200px;
                       ">
                           <p style="margin: 0; font-weight: bold;">Totalt</p>
-                          <p style="margin: 0; font-weight: bold;">SEK ${bookingDetails.totalCost}</p>
+                          <p style="margin: 0; font-weight: bold;">SEK ${totalCost}</p>
                       </div>
                   </div>
               </div>
