@@ -85,7 +85,7 @@ async function cleanUpPaymentStates() {
               // Add timestamp and source info to the backup
               await backupCollection.insertOne({
                 ...bookingToBackup,
-                backupCreatedAt: new Date(),
+                backupCreatedAt: new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" }),
                 backupSource: "cleanUpPaymentStates"
               });
               console.log(`✅ Backup created successfully for timeSlotId: ${timeSlotId}`);
