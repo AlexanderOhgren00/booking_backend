@@ -247,27 +247,38 @@ router.post("/checkPaymentStates", async (req, res) => {
 
 router.get("/getRecentBookings", async (req, res) => {
   try {
+    const { lastDate } = req.query;
     const collections = db.collection("bookings");
     const backup = db.collection("backup");
     
-    // Get recent bookings from the bookings collection (where available is false)
-    const recentBookings = await collections.find({ available: false })
+    // Create query conditions based on lastDate
+    const queryCondition = { available: false };
+    const backupQueryCondition = {};
+    
+    if (lastDate) {
+      console.log(`Fetching bookings before date: ${lastDate}`);
+      queryCondition.bookedAt = { $lt: lastDate };
+      backupQueryCondition.backupCreatedAt = { $lt: lastDate };
+    }
+    
+    // Get recent bookings from the bookings collection
+    const recentBookings = await collections.find(queryCondition)
       .sort({ bookedAt: -1 })
       .limit(10)
       .toArray();
     
     // Get recent bookings from the backup collection
-    const recentBackups = await backup.find({})
+    const recentBackups = await backup.find(backupQueryCondition)
       .sort({ backupCreatedAt: -1 })
       .limit(10)
       .toArray();
     
-    // Merge both arrays and sort by updatedAt
+    // Merge both arrays and sort by date
     const allRecentBookings = [...recentBookings, ...recentBackups]
       .sort((a, b) => {
-        // Handle case when updatedAt might be missing
-        const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-        const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        // Handle case when date might be missing
+        const timeA = a.bookedAt || a.backupCreatedAt ? new Date(a.bookedAt || a.backupCreatedAt).getTime() : 0;
+        const timeB = b.bookedAt || b.backupCreatedAt ? new Date(b.bookedAt || b.backupCreatedAt).getTime() : 0;
         return timeB - timeA; // Sort descending (most recent first)
       })
       .slice(0, 10); // Take only the 10 most recent entries
