@@ -252,13 +252,13 @@ router.get("/getRecentBookings", async (req, res) => {
     
     // Get recent bookings from the bookings collection (where available is false)
     const recentBookings = await collections.find({ available: false })
-      .sort({ updatedAt: -1 })
+      .sort({ bookedAt: -1 })
       .limit(10)
       .toArray();
     
     // Get recent bookings from the backup collection
     const recentBackups = await backup.find({})
-      .sort({ updatedAt: -1 })
+      .sort({ backupCreatedAt: -1 })
       .limit(10)
       .toArray();
     
