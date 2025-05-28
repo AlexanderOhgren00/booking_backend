@@ -1410,7 +1410,7 @@ router.delete("/deleteDiscount", async (req, res) => {
 });
 
 router.post("/createDiscount", async (req, res) => {
-  const { key, sale, currency, expiryDate } = req.body;
+  const { key, sale, currency, expiryDate, perPlayer } = req.body;
 
   if (!key || !sale || !currency || !expiryDate) {
     return res.status(400).json({ error: "All fields are required" });
@@ -1424,7 +1424,7 @@ router.post("/createDiscount", async (req, res) => {
       return res.status(400).json({ error: "Discount code already exists" });
     }
 
-    await collections.insertOne({ key, sale, currency, expiryDate });
+    await collections.insertOne({ key, sale, currency, perPlayer, expiryDate });
 
     res.status(201).json({ message: "Discount created" });
 
