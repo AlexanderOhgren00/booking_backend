@@ -222,9 +222,9 @@ router.post("/checkPaymentStates", async (req, res) => {
 });
 
 router.delete("/deleteBackup", async (req, res) => {
-  const { paymentId } = req.body;
+  const { timeSlotId } = req.body;
   const collections = db.collection("backup");
-  const result = await collections.deleteOne({ paymentId });
+  const result = await collections.deleteOne({ timeSlotId });
   res.json({ message: "Backup deleted", result });
 });
 
@@ -532,6 +532,10 @@ router.post("/eventCreated", async (req, res) => {
           matchedCount: result.matchedCount,
           modifiedCount: result.modifiedCount
         });
+
+        const backupCollection = db.collection("backup");
+        const backupResult = await backupCollection.deleteMany({ paymentId: paymentId });
+        console.log(`✅ Deleted ${backupResult.deletedCount} backup entries for payment ${paymentId}`);
 
         try {
           const bookings = await collections.find({ paymentId: paymentId }).toArray();
@@ -1774,6 +1778,10 @@ router.post("/swish/callback", async (req, res) => {
           { $set: { available: false, payed: "Swish", updatedAt: new Date(), bookedAt: new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" }) } }
         );
         console.log("Booking update result:", result);
+
+        const backupCollection = db.collection("backup");
+        const backupResult = await backupCollection.deleteMany({ paymentId: paymentId });
+        console.log(`✅ Deleted ${backupResult.deletedCount} backup entries for payment ${paymentId}`);
 
         try {
           // Get the customer email and booking details for confirmation email
