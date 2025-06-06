@@ -221,6 +221,13 @@ router.post("/checkPaymentStates", async (req, res) => {
   }
 });
 
+router.delete("/deleteBackup", async (req, res) => {
+  const { paymentId } = req.body;
+  const collections = db.collection("backup");
+  const result = await collections.deleteOne({ paymentId });
+  res.json({ message: "Backup deleted", result });
+});
+
 router.get("/getRecentBookings", async (req, res) => {
   try {
     const { lastDate } = req.query;
