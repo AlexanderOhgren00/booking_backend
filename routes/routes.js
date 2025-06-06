@@ -316,6 +316,7 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       console.log(`Creating backup for ${body.combinedData.length} booking items for paymentId: ${paymentId}`);
       
       for (const item of body.combinedData) {
+        console.log(item, "item");
         // Create timeSlotId from booking data
         const timeSlotId = `${item.year}-${item.month}-${item.day}-${item.category}-${item.time.time}`;
         
