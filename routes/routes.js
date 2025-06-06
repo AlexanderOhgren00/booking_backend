@@ -70,30 +70,6 @@ async function cleanUpPaymentStates() {
         console.log(`Processing timeSlotId: ${timeSlotId} for reset`);
 
         try {
-          // Find the booking to backup before updating
-          const bookingToBackup = await collections.findOne({ 
-            timeSlotId: timeSlotId,
-            available: "occupied"
-          });
-
-          console.log(`Found booking to backup: ${bookingToBackup ? 'YES' : 'NO'} for timeSlotId: ${timeSlotId}`);
-
-          // Create backup if booking exists
-          if (bookingToBackup) {
-            const backupCollection = db.collection("backup");
-            try {
-              // Add timestamp and source info to the backup
-              await backupCollection.insertOne({
-                ...bookingToBackup,
-                backupCreatedAt: new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" }),
-                backupSource: "cleanUpPaymentStates"
-              });
-              console.log(`✅ Backup created successfully for timeSlotId: ${timeSlotId}`);
-            } catch (backupError) {
-              console.error(`❌ Error creating backup for timeSlotId: ${timeSlotId}:`, backupError);
-            }
-          }
-
           // Update the booking directly using timeSlotId
           console.log(`Attempting to reset booking with timeSlotId: ${timeSlotId}`);
           console.log(`Query conditions: { timeSlotId: "${timeSlotId}", available: "occupied" }`);
@@ -324,6 +300,42 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     const paymentId = req.params.paymentId;
     const currentDate = new Date();
     const body = req.body
+
+    // Add bookings to backup collection before processing
+    try {
+      const collections = db.collection("bookings");
+      const backupCollection = db.collection("backup");
+      
+      console.log(`Creating backup for ${body.combinedData.length} booking items for paymentId: ${paymentId}`);
+      
+      for (const item of body.combinedData) {
+        // Create timeSlotId from booking data
+        const timeSlotId = `${item.year}-${item.month}-${item.day}-${item.category}-${item.time.time}`;
+        
+        console.log(`Looking for booking with timeSlotId: ${timeSlotId}`);
+        
+        // Find the booking to backup
+        const bookingToBackup = await collections.findOne({ 
+          timeSlotId: timeSlotId
+        });
+        
+        if (bookingToBackup) {
+          // Add timestamp and source info to the backup
+          await backupCollection.insertOne({
+            ...bookingToBackup,
+            backupCreatedAt: new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" }),
+            backupSource: "paymentInitialize",
+            paymentId: paymentId
+          });
+          console.log(`✅ Backup created for timeSlotId: ${timeSlotId}`);
+        } else {
+          console.log(`⚠️ No booking found for timeSlotId: ${timeSlotId}`);
+        }
+      }
+    } catch (backupError) {
+      console.error(`❌ Error creating backup for paymentId ${paymentId}:`, backupError);
+      // Continue processing even if backup fails
+    }
 
     for (const existingPaymentId in paymentStates) {
       const existingData = paymentStates[existingPaymentId].data;
