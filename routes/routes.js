@@ -251,10 +251,16 @@ router.get("/getRecentBookings", async (req, res) => {
       .toArray();
     
     // Get recent bookings from the backup collection
+    console.log("Backup query condition:", backupQueryCondition);
     const recentBackups = await backup.find(backupQueryCondition)
       .sort({ backupCreatedAt: -1 })
       .limit(10)
       .toArray();
+    
+    console.log(`Found ${recentBackups.length} backup entries`);
+    if (recentBackups.length > 0) {
+      console.log("Latest backup backupCreatedAt:", recentBackups[0].backupCreatedAt);
+    }
     
     // Merge both arrays and sort by date
     const allRecentBookings = [...recentBookings, ...recentBackups]
@@ -328,9 +334,21 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
         
         if (bookingToBackup) {
           // Add timestamp and source info to the backup
+          // Create a reliable Swedish timezone timestamp
+          const currentTime = new Date();
+          const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+            timeZone: 'Europe/Stockholm',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          }).format(currentTime);
+
           await backupCollection.insertOne({
             ...bookingToBackup,
-            backupCreatedAt: new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" }),
+            backupCreatedAt: swedenTime,
             backupSource: "paymentInitialize",
             paymentId: paymentId
           });
@@ -516,6 +534,19 @@ router.post("/eventCreated", async (req, res) => {
 
         // Update all bookings with this paymentId in database
         const collections = db.collection("bookings");
+        
+        // Create a reliable Swedish timezone timestamp
+        const currentTime = new Date();
+        const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'Europe/Stockholm',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        }).format(currentTime);
+        
         const result = await collections.updateMany(
           { paymentId: paymentId },
           {
@@ -523,7 +554,7 @@ router.post("/eventCreated", async (req, res) => {
               available: false,
               payed: "Nets Easy",
               updatedAt: new Date(),
-              bookedAt: new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })
+              bookedAt: swedenTime
             }
           }
         );
@@ -1772,10 +1803,22 @@ router.post("/swish/callback", async (req, res) => {
         const collections = db.collection("bookings");
         const paymentId = req.body.id;
 
+        // Create a reliable Swedish timezone timestamp
+        const currentTime = new Date();
+        const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'Europe/Stockholm',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        }).format(currentTime);
+
         // Update all bookings with this paymentId
         const result = await collections.updateMany(
           { paymentId: paymentId },
-          { $set: { available: false, payed: "Swish", updatedAt: new Date(), bookedAt: new Date().toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" }) } }
+          { $set: { available: false, payed: "Swish", updatedAt: new Date(), bookedAt: swedenTime } }
         );
         console.log("Booking update result:", result);
 
