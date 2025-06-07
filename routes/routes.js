@@ -328,6 +328,30 @@ router.post("/v1/payments", async (req, res) => {
   }
 });
 
+router.post("addbackup", async (req, res) => {
+  const { backupData } = req.body;
+  const collections = db.collection("backup");
+
+  const currentTime = new Date();
+  const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Europe/Stockholm',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  }).format(currentTime);
+
+  const result = await collections.insertOne({
+    backupData,
+    backupCreatedAt: swedenTime,
+    backupSource: "canceled",
+    paymentId: backupData.paymentId
+  });
+  res.json({ message: "Backup added", result });
+});
+
 router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
   try {
     const paymentId = req.params.paymentId;
