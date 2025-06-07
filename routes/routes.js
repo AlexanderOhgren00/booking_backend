@@ -264,10 +264,17 @@ router.get("/getRecentBookings", async (req, res) => {
       console.log("Specific backup backupCreatedAt:", specificBackup.backupCreatedAt);
     }
     
-    const recentBackups = await backup.find(backupQueryCondition)
-      .sort({ backupCreatedAt: -1 })
-      .limit(10)
-      .toArray();
+    // Get all backups first, then sort in JavaScript to handle mixed date formats
+    const allBackups = await backup.find(backupQueryCondition).toArray();
+    
+    // Sort by actual date values, handling different formats
+    const recentBackups = allBackups
+      .sort((a, b) => {
+        const dateA = new Date(a.backupCreatedAt).getTime() || 0;
+        const dateB = new Date(b.backupCreatedAt).getTime() || 0;
+        return dateB - dateA; // Sort descending (newest first)
+      })
+      .slice(0, 10);
     
     console.log(`Found ${recentBackups.length} backup entries after query`);
     if (recentBackups.length > 0) {
