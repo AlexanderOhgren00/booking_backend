@@ -251,15 +251,28 @@ router.get("/getRecentBookings", async (req, res) => {
       .toArray();
     
     // Get recent bookings from the backup collection
-    console.log("Backup query condition:", backupQueryCondition);
+    console.log("Backup query condition:", JSON.stringify(backupQueryCondition, null, 2));
+    
+    // First, count total backup entries
+    const totalBackups = await backup.countDocuments({});
+    console.log(`Total backup entries in collection: ${totalBackups}`);
+    
+    // Check if our specific backup exists
+    const specificBackup = await backup.findOne({ paymentId: "1bb3f37acc7747efac060e035653d52b" });
+    console.log("Specific backup found:", specificBackup ? "YES" : "NO");
+    if (specificBackup) {
+      console.log("Specific backup backupCreatedAt:", specificBackup.backupCreatedAt);
+    }
+    
     const recentBackups = await backup.find(backupQueryCondition)
       .sort({ backupCreatedAt: -1 })
       .limit(10)
       .toArray();
     
-    console.log(`Found ${recentBackups.length} backup entries`);
+    console.log(`Found ${recentBackups.length} backup entries after query`);
     if (recentBackups.length > 0) {
       console.log("Latest backup backupCreatedAt:", recentBackups[0].backupCreatedAt);
+      console.log("All backup dates:", recentBackups.map(b => b.backupCreatedAt));
     }
     
     // Merge both arrays and sort by date
