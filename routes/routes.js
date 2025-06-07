@@ -89,7 +89,7 @@ async function cleanUpPaymentStates() {
                 number: null,
                 email: null,
                 info: null,
-                discount: null,
+                discount: item.discount,
                 bookingRef: null,
                 updatedAt: new Date()
               }
