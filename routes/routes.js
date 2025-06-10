@@ -73,9 +73,9 @@ async function cleanUpPaymentStates() {
           // Update the booking directly using timeSlotId
           console.log(`Attempting to reset booking with timeSlotId: ${timeSlotId}`);
           console.log(`Query conditions: { timeSlotId: "${timeSlotId}", available: "occupied" }`);
-          
+
           const updateResult = await collections.updateOne(
-            { 
+            {
               timeSlotId: timeSlotId,
               available: "occupied"
             },
@@ -95,13 +95,13 @@ async function cleanUpPaymentStates() {
               }
             }
           );
-          
+
           console.log(`Update result details for ${timeSlotId}:`);
           console.log(`- matchedCount: ${updateResult.matchedCount}`);
           console.log(`- modifiedCount: ${updateResult.modifiedCount}`);
           console.log(`- upsertedCount: ${updateResult.upsertedCount}`);
           console.log(`- acknowledged: ${updateResult.acknowledged}`);
-          
+
           if (updateResult.matchedCount === 0) {
             console.log(`⚠️ No matching booking found for timeSlotId: ${timeSlotId}`);
             // Try an alternative query to check if the booking exists in a different state
@@ -233,40 +233,40 @@ router.get("/getRecentBookings", async (req, res) => {
     const { lastDate } = req.query;
     const collections = db.collection("bookings");
     const backup = db.collection("backup");
-    
+
     // Create query conditions based on lastDate
     const queryCondition = { available: false };
     const backupQueryCondition = {};
-    
+
     if (lastDate) {
       console.log(`Fetching bookings before date: ${lastDate}`);
       queryCondition.bookedAt = { $lt: lastDate };
       backupQueryCondition.backupCreatedAt = { $lt: lastDate };
     }
-    
+
     // Get recent bookings from the bookings collection
     const recentBookings = await collections.find(queryCondition)
       .sort({ bookedAt: -1 })
       .limit(10)
       .toArray();
-    
+
     // Get recent bookings from the backup collection
     console.log("Backup query condition:", JSON.stringify(backupQueryCondition, null, 2));
-    
+
     // First, count total backup entries
     const totalBackups = await backup.countDocuments({});
     console.log(`Total backup entries in collection: ${totalBackups}`);
-    
+
     // Check if our specific backup exists
     const specificBackup = await backup.findOne({ paymentId: "1bb3f37acc7747efac060e035653d52b" });
     console.log("Specific backup found:", specificBackup ? "YES" : "NO");
     if (specificBackup) {
       console.log("Specific backup backupCreatedAt:", specificBackup.backupCreatedAt);
     }
-    
+
     // Get all backups first, then sort in JavaScript to handle mixed date formats
     const allBackups = await backup.find(backupQueryCondition).toArray();
-    
+
     // Sort by actual date values, handling different formats
     const recentBackups = allBackups
       .sort((a, b) => {
@@ -275,13 +275,13 @@ router.get("/getRecentBookings", async (req, res) => {
         return dateB - dateA; // Sort descending (newest first)
       })
       .slice(0, 10);
-    
+
     console.log(`Found ${recentBackups.length} backup entries after query`);
     if (recentBackups.length > 0) {
       console.log("Latest backup backupCreatedAt:", recentBackups[0].backupCreatedAt);
       console.log("All backup dates:", recentBackups.map(b => b.backupCreatedAt));
     }
-    
+
     // Merge both arrays and sort by date
     const allRecentBookings = [...recentBookings, ...recentBackups]
       .sort((a, b) => {
@@ -291,7 +291,7 @@ router.get("/getRecentBookings", async (req, res) => {
         return timeB - timeA; // Sort descending (most recent first)
       })
       .slice(0, 10); // Take only the 10 most recent entries
-    
+
     res.json(allRecentBookings);
   } catch (error) {
     console.error("Error fetching recent bookings:", error);
@@ -357,25 +357,27 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     const paymentId = req.params.paymentId;
     const currentDate = new Date();
     const body = req.body
+    const { discountApplied } = req.body;
 
     // Add bookings to backup collection before processing
     try {
       const collections = db.collection("bookings");
       const backupCollection = db.collection("backup");
-      
+      const discountCollection = db.collection("discounts");
+
       console.log(`Creating backup for ${body.combinedData.length} booking items for paymentId: ${paymentId}`);
-      
+
       for (const item of body.combinedData) {
         // Create timeSlotId from booking data
         const timeSlotId = `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`;
-        
+
         console.log(`Looking for booking with timeSlotId: ${timeSlotId}`);
-        
+
         // Find the booking to backup
-        const bookingToBackup = await collections.findOne({ 
+        const bookingToBackup = await collections.findOne({
           timeSlotId: timeSlotId
         });
-        
+
         if (bookingToBackup) {
           // Add timestamp and source info to the backup
           // Create a reliable Swedish timezone timestamp
@@ -404,6 +406,31 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     } catch (backupError) {
       console.error(`❌ Error creating backup for paymentId ${paymentId}:`, backupError);
       // Continue processing even if backup fails
+    }
+
+    // Update discount usage if discountApplied is provided
+    if (discountApplied && body.combinedData && body.combinedData.length > 0) {
+      try {
+        if (paymentId) {
+          console.log(`Updating discount ${discountApplied} with usedBy: ${paymentId}`);
+          
+          const discountUpdateResult = await discountCollection.updateOne(
+            { key: discountApplied },
+            { $set: { usedBy: paymentId } }
+          );
+          
+          if (discountUpdateResult.matchedCount > 0) {
+            console.log(`✅ Successfully updated discount ${discountApplied} with payment ID ${paymentId}`);
+          } else {
+            console.log(`⚠️ No discount found with key: ${discountApplied}`);
+          }
+        } else {
+          console.log(`⚠️ No paymentId available`);
+        }
+      } catch (discountError) {
+        console.error(`❌ Error updating discount usage:`, discountError);
+        // Continue processing even if discount update fails
+      }
     }
 
     for (const existingPaymentId in paymentStates) {
@@ -439,7 +466,7 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
         try {
           console.log("Cancelling payment", existingPaymentId);
           const cancelResponse = await client.patch(
-            `https://cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests/${existingPaymentId}`, 
+            `https://cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests/${existingPaymentId}`,
             [{
               "op": "replace",
               "path": "/status",
@@ -535,7 +562,7 @@ router.post("/send-paylink", async (req, res) => {
 router.post("/eventCreated", async (req, res) => {
   try {
     const event = req.body;
-    
+
     // Log the event for debugging purposes
     console.log("Webhook event received:", event);
 
@@ -578,7 +605,7 @@ router.post("/eventCreated", async (req, res) => {
 
         // Update all bookings with this paymentId in database
         const collections = db.collection("bookings");
-        
+
         // Create a reliable Swedish timezone timestamp
         const currentTime = new Date();
         const swedenTime = new Intl.DateTimeFormat('sv-SE', {
@@ -590,7 +617,7 @@ router.post("/eventCreated", async (req, res) => {
           minute: '2-digit',
           second: '2-digit'
         }).format(currentTime);
-        
+
         const result = await collections.updateMany(
           { paymentId: paymentId },
           {
@@ -612,9 +639,20 @@ router.post("/eventCreated", async (req, res) => {
         const backupResult = await backupCollection.deleteMany({ paymentId: paymentId });
         console.log(`✅ Deleted ${backupResult.deletedCount} backup entries for payment ${paymentId}`);
 
+        // Delete discount usage after successful payment
+        try {
+          const discountCollection = db.collection("discounts");
+          const discountDeleteResult = await discountCollection.deleteOne({ usedBy: paymentId });
+          if (discountDeleteResult.deletedCount > 0) {
+            console.log(`✅ Deleted discount with usedBy: ${paymentId}`);
+          }
+        } catch (discountError) {
+          console.error(`❌ Error deleting discount for payment ${paymentId}:`, discountError);
+        }
+
         try {
           const bookings = await collections.find({ paymentId: paymentId }).toArray();
-          
+
           if (bookings.length > 0 && bookings[0].email) {
             // Prepare booking details for email
             const email = bookings[0].email;
@@ -622,7 +660,7 @@ router.post("/eventCreated", async (req, res) => {
             const bookingDate = new Date().toISOString().split('T')[0];
             const totalCost = bookings.reduce((sum, booking) => sum + (booking.cost || 0), 0);
             const tax = Math.round(totalCost * 0.20);
-            
+
             // Prepare items for the email
             const items = bookings.map(booking => ({
               category: booking.category,
@@ -631,7 +669,7 @@ router.post("/eventCreated", async (req, res) => {
               players: booking.players,
               cost: booking.cost
             }));
-            
+
             // Send confirmation email using the exact same template as send-confirmation
             const emailHtml = `
                 <div style="
@@ -745,14 +783,14 @@ router.post("/eventCreated", async (req, res) => {
                     </div>
                 </div>
             `;
-            
+
             await transporter.sendMail({
               from: process.env.EMAIL_USER,
               to: email,
               subject: "Bokningsbekräftelse - Din betalning har mottagits",
               html: emailHtml
             });
-            
+
             console.log(`Confirmation email sent to ${email} for payment ${paymentId}`);
           } else {
             console.log(`No email found for payment ${paymentId} or no bookings associated`);
@@ -881,10 +919,10 @@ router.post("/login", loginLimiter, async (req, res) => {
 
   try {
     // Use case-insensitive search with regex
-    const user = await collections.findOne({ 
+    const user = await collections.findOne({
       username: { $regex: new RegExp(`^${username}$`, 'i') }
     });
-    
+
     if (!user) {
       return res.status(401).json({ error: "Invalid username or password" });
     }
@@ -1508,7 +1546,7 @@ router.delete("/deleteDiscount", async (req, res) => {
 });
 
 router.post("/createDiscount", async (req, res) => {
-  const { key, sale, currency, expiryDate, perPlayer, discountType } = req.body;
+  const { key, sale, currency, expiryDate, perPlayer, discountType, usedBy } = req.body;
 
   if (!key || !sale || !currency || !expiryDate) {
     return res.status(400).json({ error: "All fields are required" });
@@ -1522,7 +1560,7 @@ router.post("/createDiscount", async (req, res) => {
       return res.status(400).json({ error: "Discount code already exists" });
     }
 
-    await collections.insertOne({ key, sale, currency, perPlayer, expiryDate, discountType });
+    await collections.insertOne({ key, sale, currency, perPlayer, expiryDate, discountType, usedBy });
 
     res.status(201).json({ message: "Discount created" });
 
@@ -1572,7 +1610,7 @@ router.patch("/checkout", async (req, res) => {
   try {
     const result = await db.collection("bookings").updateOne(
       { timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}` },
-      { $set: { ...updateData, updatedAt: new Date()} }
+      { $set: { ...updateData, updatedAt: new Date() } }
     );
     res.json(result);
     broadcast({ type: "timeUpdate", message: "Update" });
@@ -1870,10 +1908,21 @@ router.post("/swish/callback", async (req, res) => {
         const backupResult = await backupCollection.deleteMany({ paymentId: paymentId });
         console.log(`✅ Deleted ${backupResult.deletedCount} backup entries for payment ${paymentId}`);
 
+        // Delete discount usage after successful payment
+        try {
+          const discountCollection = db.collection("discounts");
+          const discountDeleteResult = await discountCollection.deleteOne({ usedBy: paymentId });
+          if (discountDeleteResult.deletedCount > 0) {
+            console.log(`✅ Deleted discount with usedBy: ${paymentId}`);
+          }
+        } catch (discountError) {
+          console.error(`❌ Error deleting discount for payment ${paymentId}:`, discountError);
+        }
+
         try {
           // Get the customer email and booking details for confirmation email
           const bookings = await collections.find({ paymentId: paymentId }).toArray();
-          
+
           if (bookings.length > 0 && bookings[0].email) {
             // Prepare booking details for email
             const email = bookings[0].email;
@@ -1881,7 +1930,7 @@ router.post("/swish/callback", async (req, res) => {
             const bookingDate = new Date().toISOString().split('T')[0];
             const totalCost = bookings.reduce((sum, booking) => sum + (booking.cost || 0), 0);
             const tax = Math.round(totalCost * 0.20);
-            
+
             // Prepare items for the email
             const items = bookings.map(booking => ({
               category: booking.category,
@@ -1890,7 +1939,7 @@ router.post("/swish/callback", async (req, res) => {
               players: booking.players,
               cost: booking.cost
             }));
-            
+
             // Send confirmation email using the exact same template as send-confirmation
             const emailHtml = `
                 <div style="
@@ -2004,14 +2053,14 @@ router.post("/swish/callback", async (req, res) => {
                     </div>
                 </div>
             `;
-            
+
             await transporter.sendMail({
               from: process.env.EMAIL_USER,
               to: email,
               subject: "Bokningsbekräftelse - Din betalning har mottagits",
               html: emailHtml
             });
-            
+
             console.log(`Confirmation email sent to ${email} for payment ${paymentId}`);
           } else {
             console.log(`No email found for payment ${paymentId} or no bookings associated`);
@@ -2122,7 +2171,7 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
         errorMessage: response.data?.errorMessage
       });
       const cancelResponse = await client.patch(
-        `https://cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests/${existingPaymentId}`, 
+        `https://cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests/${existingPaymentId}`,
         [{
           "op": "replace",
           "path": "/status",
@@ -2438,24 +2487,24 @@ router.post("/edit-confirmation", async (req, res) => {
     // Fetch all bookings with the given paymentId
     const collections = db.collection("bookings");
     let bookings = [];
-    
+
     if (paymentId) {
       // If paymentId is provided, fetch bookings by paymentId
       bookings = await collections.find({ paymentId: paymentId }).toArray();
       console.log(`Found ${bookings.length} bookings for paymentId ${paymentId}`);
     }
-    
+
     // If no bookings found by paymentId or no paymentId provided, use the items from bookingDetails
-    const items = bookings.length > 0 
+    const items = bookings.length > 0
       ? bookings.map(booking => ({
-          category: booking.category,
-          date: `${booking.day} ${booking.month} ${booking.year}`,
-          time: booking.time,
-          players: booking.players,
-          cost: booking.cost
-        }))
+        category: booking.category,
+        date: `${booking.day} ${booking.month} ${booking.year}`,
+        time: booking.time,
+        players: booking.players,
+        cost: booking.cost
+      }))
       : bookingDetails.items;
-    
+
     // Calculate total cost and tax based on the items
     const totalCost = items.reduce((sum, item) => sum + (item.cost || 0), 0);
     const tax = Math.round(totalCost * 0.20);
