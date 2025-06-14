@@ -2813,6 +2813,633 @@ router.post("/reset-all-offers", async (req, res) => {
   }
 });
 
+// Gift Card Routes
+
+// Store gift card in database
+router.post("/giftcard", async (req, res) => {
+  try {
+    const giftCardData = req.body;
+    const collections = db.collection("giftcards");
+
+    // Add timestamp
+    const currentTime = new Date();
+    const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Europe/Stockholm',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    }).format(currentTime);
+
+    const result = await collections.insertOne({
+      ...giftCardData,
+      createdAt: swedenTime,
+      updatedAt: new Date()
+    });
+
+    console.log("Gift card created:", giftCardData.reference);
+    res.status(201).json({ 
+      message: "Gift card created successfully", 
+      id: result.insertedId,
+      reference: giftCardData.reference
+    });
+
+  } catch (error) {
+    console.error("Error creating gift card:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Initialize gift card payment
+router.post("/v1/giftcard-payments/:paymentId/initialize", async (req, res) => {
+  try {
+    const paymentId = req.params.paymentId;
+    const currentDate = new Date();
+    const body = req.body;
+
+    console.log(`Initializing gift card payment: ${paymentId}`);
+
+    // Store payment state for tracking
+    paymentStates[paymentId] = { 
+      date: currentDate, 
+      data: body.giftCardData,
+      type: "giftcard"
+    };
+
+    console.log("Gift card payment states:", Object.keys(paymentStates));
+
+    res.status(200).json({ 
+      message: "Gift card payment initialized", 
+      paymentId, 
+      date: currentDate 
+    });
+
+    broadcast({
+      type: "giftcard_initialize",
+      message: "Gift card payment initialized"
+    });
+
+  } catch (error) {
+    console.error("Error initializing gift card payment:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Swish payment for gift cards
+router.post('/swish/giftcard-payment/:instructionUUID', async (req, res) => {
+  try {
+    const { instructionUUID } = req.params;
+    const { payerAlias, amount, message, isMobile } = req.body;
+
+    console.log('=== Swish Gift Card Payment Request ===');
+    console.log('Request params:', { instructionUUID });
+    console.log('Request body:', { payerAlias, amount, message, isMobile });
+
+    // Load certificates
+    const cert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
+    const key = fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), 'utf8');
+    const ca = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), 'utf8');
+
+    const httpsAgent = new https.Agent({
+      cert,
+      key,
+      ca,
+      minVersion: 'TLSv1.2',
+      rejectUnauthorized: false
+    });
+
+    const client = axios.create({ httpsAgent });
+
+    // Base payment data
+    let paymentData = {
+      payeePaymentReference: instructionUUID,
+      callbackUrl: 'https://mintbackend-0066444807ba.herokuapp.com/swish/giftcard-callback',
+      payeeAlias: '1230047647',
+      amount: amount,
+      currency: 'SEK',
+      message: message
+    };
+
+    // Add payerAlias if provided
+    if (payerAlias && typeof payerAlias === 'string') {
+      paymentData.payerAlias = payerAlias.startsWith('0') ? '46' + payerAlias.slice(1) : payerAlias;
+      console.log('Added payerAlias:', paymentData.payerAlias);
+    }
+
+    console.log('Gift card payment data:', paymentData);
+
+    const response = await client.put(
+      `https://cpc.getswish.net/swish-cpcapi/api/v2/paymentrequests/${instructionUUID}`,
+      paymentData,
+      {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        validateStatus: false
+      }
+    );
+
+    console.log('Swish Gift Card API Response:', {
+      status: response.status,
+      statusText: response.statusText,
+      data: response.data
+    });
+
+    // For QR code payments
+    if (!isMobile && response.status === 201) {
+      console.log('Making QR code status request for gift card...');
+      try {
+        const statusResponse = await client.post(
+          `https://mpc.getswish.net/qrg-swish/api/v1/commerce`,
+          {
+            token: response.headers.location,
+            format: "svg",
+            transparent: true,
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            validateStatus: false
+          }
+        );
+
+        return res.status(response.status).json({
+          status: response.status,
+          paymentRequestToken: response.headers.location,
+          instructionUUID,
+          paymentType: 'qr',
+          paymentStatus: statusResponse.data
+        });
+      } catch (statusError) {
+        console.error('Error fetching QR code status for gift card:', statusError);
+      }
+    }
+
+    res.status(response.status).json({
+      status: response.status,
+      paymentRequestToken: response.headers.location,
+      instructionUUID,
+      paymentType: isMobile ? 'mobile' : 'qr'
+    });
+
+  } catch (error) {
+    console.error('=== Swish Gift Card Payment Error ===');
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      response: error.response?.data,
+      status: error.response?.status
+    });
+    res.status(500).json({
+      error: 'Gift card payment processing error',
+      message: error.message,
+      details: error.response?.data
+    });
+  }
+});
+
+// Gift card payment confirmation
+router.post("/swish-giftcard-payment-confirmation", async (req, res) => {
+  const { paymentId } = req.body;
+
+  if (!paymentId) {
+    console.log("No paymentId provided for gift card confirmation");
+    return res.status(400).json({ error: "Payment ID is required" });
+  }
+
+  if (!paymentStates[paymentId]) {
+    return res.json({
+      status: "PAID"
+    });
+  }
+
+  res.json({
+    status: "NOT PAID"
+  });
+});
+
+// Swish callback for gift cards
+router.post("/swish/giftcard-callback", async (req, res) => {
+  try {
+    const {
+      id,
+      payeePaymentReference,
+      paymentReference,
+      status,
+      amount,
+      datePaid,
+      message,
+      payerAlias
+    } = req.body;
+
+    console.log('Swish gift card callback received:', req.body);
+
+    if (status === 'PAID') {
+      try {
+        const collections = db.collection("giftcards");
+        const instructionId = req.body.payeePaymentReference; // Our instructionId, not Swish's ID
+
+        // Create a reliable Swedish timezone timestamp
+        const currentTime = new Date();
+        const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'Europe/Stockholm',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        }).format(currentTime);
+
+        // Update gift card with payment confirmation
+        const result = await collections.updateMany(
+          { paymentId: instructionId },
+          { 
+            $set: { 
+              payed: true, 
+              paymentMethod: "Swish",
+              paidAt: swedenTime,
+              updatedAt: new Date() 
+            } 
+          }
+        );
+
+        console.log("Gift card update result:", {
+          matchedCount: result.matchedCount,
+          modifiedCount: result.modifiedCount
+        });
+
+        // Send gift card email to recipient
+        try {
+          const giftCards = await collections.find({ paymentId: instructionId }).toArray();
+
+          if (giftCards.length > 0 && giftCards[0].recipientEmail) {
+            const giftCard = giftCards[0];
+            
+            // Send gift card email
+            const emailHtml = `
+              <div style="
+                  font-family: Arial, sans-serif;
+                  max-width: 600px;
+                  margin: 0 auto;
+                  padding: 60px 20px 40px 20px;
+              ">
+                  <div style="
+                      display: flex;
+                      flex-direction: column;
+                      align-items: center;
+                      text-align: center;
+                      margin-bottom: 20px;
+                  ">
+                      <h1 style="color: #333;">🎁 Du har fått ett presentkort!</h1>
+                  </div>
+
+                  <div style="
+                      background-color: rgb(17, 21, 22);
+                      border-radius: 15px;
+                      overflow: hidden;
+                      margin-bottom: 30px;
+                  ">
+                      <div style="
+                          padding: 30px 10px;
+                          border-bottom: 1px solid rgb(29, 29, 29);
+                      ">
+                          <h2 style="
+                              margin: 10px 0 5px 0;
+                              color: white;
+                          ">Presentkort - Mint Escape Room</h2>
+                          <p style="
+                              margin: 0;
+                              color: rgb(160, 160, 160);
+                          ">Presentkortsnummer: ${giftCard.reference}</p>
+                          <p style="
+                              margin: 0;
+                              color: rgb(160, 160, 160);
+                          ">Värde: ${giftCard.totalAmount} SEK</p>
+                      </div>
+
+                      <div style="
+                          padding: 20px 10px;
+                          color: rgb(160, 160, 160);
+                      ">
+                          <p style="margin: 0;">Mint Escape Room AB | Org.nr: 559382-8444 44</p>
+                          <p style="margin: 0;">Vaksalagatan 31 A 753 31 Uppsala</p>
+                      </div>
+
+                      ${giftCard.message ? `
+                      <div style="
+                          padding: 20px 10px;
+                          color: white;
+                          border-top: 1px solid rgb(29, 29, 29);
+                      ">
+                          <h3 style="margin: 0 0 10px 0; color: rgb(154, 220, 198);">Personligt meddelande:</h3>
+                          <p style="margin: 0; font-style: italic;">"${giftCard.message}"</p>
+                      </div>
+                      ` : ''}
+                  </div>
+
+                  <div style="
+                      background-color: rgb(154, 220, 198);
+                      color: black;
+                      padding: 20px;
+                      border-radius: 10px;
+                      text-align: center;
+                  ">
+                      <p style="margin: 0; font-weight: bold;">
+                          Boka din upplevelse på mintescaperoom.se eller ring 018-21 11 10
+                      </p>
+                  </div>
+              </div>
+            `;
+
+            await transporter.sendMail({
+              from: process.env.EMAIL_USER,
+              to: giftCard.recipientEmail,
+              subject: "🎁 Ditt presentkort från Mint Escape Room",
+              html: emailHtml
+            });
+
+            console.log(`Gift card email sent to ${giftCard.recipientEmail} for payment ${instructionId}`);
+          }
+        } catch (emailError) {
+          console.error("Error sending gift card email:", emailError);
+        }
+
+        // Remove from payment states
+        if (paymentStates[instructionId]) {
+          delete paymentStates[instructionId];
+          console.log("Gift card payment terminated from paymentStates:", instructionId);
+        }
+
+      } catch (dbError) {
+        console.error('Error updating gift card:', dbError);
+      }
+    }
+
+    // Always return 200 OK to Swish
+    res.status(200).json({
+      message: 'Gift card callback received',
+      receivedData: req.body
+    });
+
+  } catch (error) {
+    console.error('Swish gift card callback error:', error);
+    res.status(200).json({
+      error: 'Gift card callback processing error',
+      errorDetails: error.message
+    });
+  }
+});
+
+// Webhook for gift card purchases (Nets Easy)
+router.post("/giftCardCreated", async (req, res) => {
+  try {
+    const event = req.body;
+
+    console.log("Gift card webhook event received:", event);
+
+    switch (event.event) {
+      case "payment.checkout.completed":
+        console.log("Gift card payment completed event:", event.data);
+
+        const orderData = event.data.order;
+        const paymentId = event.data.paymentId;
+        
+        console.log("Gift card order details:", {
+          amount: orderData.amount.amount,
+          reference: orderData.reference
+        });
+
+        const amount = orderData.amount.amount;
+
+        // Charge the payment
+        const chargeResponse = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": key,
+          },
+          body: JSON.stringify({ amount: amount })
+        });
+
+        const chargeData = await chargeResponse.json();
+        console.log("Gift card charge response:", chargeData);
+
+        // Update gift card with payment confirmation
+        const collections = db.collection("giftcards");
+        
+        const currentTime = new Date();
+        const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'Europe/Stockholm',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        }).format(currentTime);
+
+        // Use netsPaymentId to find the record
+        const result = await collections.updateMany(
+          { netsPaymentId: paymentId },
+          {
+            $set: {
+              payed: true,
+              paymentMethod: "Nets Easy",
+              paidAt: swedenTime,
+              updatedAt: new Date()
+            }
+          }
+        );
+
+        console.log("Gift card update result:", {
+          matchedCount: result.matchedCount,
+          modifiedCount: result.modifiedCount
+        });
+
+        // Send gift card email to recipient - also use netsPaymentId
+        try {
+          const giftCards = await collections.find({ netsPaymentId: paymentId }).toArray();
+
+          if (giftCards.length > 0 && giftCards[0].recipientEmail) {
+            const giftCard = giftCards[0];
+            
+            // Send gift card email
+            const emailHtml = `
+              <div style="
+                  font-family: Arial, sans-serif;
+                  max-width: 600px;
+                  margin: 0 auto;
+                  padding: 60px 20px 40px 20px;
+              ">
+                  <div style="
+                      display: flex;
+                      flex-direction: column;
+                      align-items: center;
+                      text-align: center;
+                      margin-bottom: 20px;
+                  ">
+                      <h1 style="color: #333;">🎁 Du har fått ett presentkort!</h1>
+                  </div>
+
+                  <div style="
+                      background-color: rgb(17, 21, 22);
+                      border-radius: 15px;
+                      overflow: hidden;
+                      margin-bottom: 30px;
+                  ">
+                      <div style="
+                          padding: 30px 10px;
+                          border-bottom: 1px solid rgb(29, 29, 29);
+                      ">
+                          <h2 style="
+                              margin: 10px 0 5px 0;
+                              color: white;
+                          ">Presentkort - Mint Escape Room</h2>
+                          <p style="
+                              margin: 0;
+                              color: rgb(160, 160, 160);
+                          ">Presentkortsnummer: ${giftCard.reference}</p>
+                          <p style="
+                              margin: 0;
+                              color: rgb(160, 160, 160);
+                          ">Värde: ${giftCard.totalAmount} SEK</p>
+                      </div>
+
+                      <div style="
+                          padding: 20px 10px;
+                          color: rgb(160, 160, 160);
+                      ">
+                          <p style="margin: 0;">Mint Escape Room AB | Org.nr: 559382-8444 44</p>
+                          <p style="margin: 0;">Vaksalagatan 31 A 753 31 Uppsala</p>
+                      </div>
+
+                      ${giftCard.message ? `
+                      <div style="
+                          padding: 20px 10px;
+                          color: white;
+                          border-top: 1px solid rgb(29, 29, 29);
+                      ">
+                          <h3 style="margin: 0 0 10px 0; color: rgb(154, 220, 198);">Personligt meddelande:</h3>
+                          <p style="margin: 0; font-style: italic;">"${giftCard.message}"</p>
+                      </div>
+                      ` : ''}
+                  </div>
+
+                  <div style="
+                      background-color: rgb(154, 220, 198);
+                      color: black;
+                      padding: 20px;
+                      border-radius: 10px;
+                      text-align: center;
+                  ">
+                      <p style="margin: 0; font-weight: bold;">
+                          Boka din upplevelse på mintescaperoom.se eller ring 018-21 11 10
+                      </p>
+                  </div>
+              </div>
+            `;
+
+            await transporter.sendMail({
+              from: process.env.EMAIL_USER,
+              to: giftCard.recipientEmail,
+              subject: "🎁 Ditt presentkort från Mint Escape Room",
+              html: emailHtml
+            });
+
+            console.log(`Gift card email sent to ${giftCard.recipientEmail} for payment ${paymentId}`);
+          }
+        } catch (emailError) {
+          console.error("Error sending gift card email:", emailError);
+        }
+
+        // Remove from payment states - use instructionId if available
+        const giftCards = await collections.find({ netsPaymentId: paymentId }).toArray();
+        if (giftCards.length > 0 && giftCards[0].instructionId && paymentStates[giftCards[0].instructionId]) {
+          delete paymentStates[giftCards[0].instructionId];
+          console.log("Gift card payment terminated from paymentStates:", giftCards[0].instructionId);
+        }
+
+        break;
+      default:
+        console.log("Unhandled gift card event type:", event);
+    }
+
+    res.status(200).send("Gift card event received");
+  } catch (error) {
+    console.error("Error processing gift card webhook event:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all gift cards (for admin)
+router.get("/giftcards", async (req, res) => {
+  try {
+    const collections = db.collection("giftcards");
+    const giftCards = await collections.find({}).sort({ createdAt: -1 }).toArray();
+    res.json(giftCards);
+  } catch (error) {
+    console.error("Error fetching gift cards:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get gift card by reference
+router.get("/giftcard/:reference", async (req, res) => {
+  try {
+    const { reference } = req.params;
+    const collections = db.collection("giftcards");
+    const giftCard = await collections.findOne({ reference: reference });
+    
+    if (!giftCard) {
+      return res.status(404).json({ error: "Gift card not found" });
+    }
+    
+    res.json(giftCard);
+  } catch (error) {
+    console.error("Error fetching gift card:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update gift card with Nets paymentId
+router.patch("/giftcard/update/:reference", async (req, res) => {
+  try {
+    const { reference } = req.params;
+    const { netsPaymentId, instructionId } = req.body;
+    const collections = db.collection("giftcards");
+
+    const result = await collections.updateOne(
+      { reference: reference },
+      { 
+        $set: { 
+          netsPaymentId: netsPaymentId,
+          instructionId: instructionId,
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "Gift card not found" });
+    }
+
+    console.log(`Gift card ${reference} updated with Nets paymentId: ${netsPaymentId}`);
+    res.status(200).json({ 
+      message: "Gift card updated successfully",
+      reference: reference,
+      netsPaymentId: netsPaymentId
+    });
+
+  } catch (error) {
+    console.error("Error updating gift card:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
 
 // const order = {
