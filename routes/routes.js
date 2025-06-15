@@ -559,264 +559,327 @@ router.post("/send-paylink", async (req, res) => {
   }
 });
 
-router.post("/eventCreated", async (req, res) => {
-  try {
-    const event = req.body;
+  router.post("/eventCreated", async (req, res) => {
+    try {
+      const event = req.body;
 
-    // Log the event for debugging purposes
-    console.log("Webhook event received:", event);
+      // Log the event for debugging purposes
+      console.log("Webhook event received:", event);
 
-    // Process the event based on the event type
-    switch (event.event) {
-      case "payment.checkout.completed":
-        // Handle payment created event
-        console.log("Payment created event:", event.data);
+      // Process the event based on the event type
+      switch (event.event) {
+        case "payment.checkout.completed":
+          // Handle payment created event
+          console.log("Payment created event:", event.data);
 
-        // Extract order details
-        const orderData = event.data.order;
-        const paymentId = event.data.paymentId;
+          // Extract order details
+          const orderData = event.data.order;
+          const paymentId = event.data.paymentId;
 
-        // Log the order details
-        console.log("Order details:", {
-          amount: orderData.amount.amount,
-          reference: orderData.reference,
-          orderItems: orderData.orderItems
-        });
+          // Log the order details
+          console.log("Order details:", {
+            amount: orderData.amount.amount,
+            reference: orderData.reference,
+            orderItems: orderData.orderItems
+          });
 
-        console.log("PAYMENT ID:", paymentId);
-        const amount = orderData.amount.amount;
+          console.log("PAYMENT ID:", paymentId);
+          const amount = orderData.amount.amount;
 
-        // Charge the payment
-        const chargeResponse = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": key,
-          },
-          body: JSON.stringify(
+          // Charge the payment
+          const chargeResponse = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": key,
+            },
+            body: JSON.stringify(
+              {
+                amount: amount,
+              }
+            )
+          });
+
+          const chargeData = await chargeResponse.json();
+          console.log("Charge response:", chargeData);
+
+          // Update all bookings with this paymentId in database
+          const collections = db.collection("bookings");
+
+          // Create a reliable Swedish timezone timestamp
+          const currentTime = new Date();
+          const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+            timeZone: 'Europe/Stockholm',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          }).format(currentTime);
+
+          const result = await collections.updateMany(
+            { paymentId: paymentId },
             {
-              amount: amount,
+              $set: {
+                available: false,
+                payed: "Nets Easy",
+                updatedAt: new Date(),
+                bookedAt: swedenTime
+              }
             }
-          )
-        });
+          );
 
-        const chargeData = await chargeResponse.json();
-        console.log("Charge response:", chargeData);
+          console.log("Booking update result:", {
+            matchedCount: result.matchedCount,
+            modifiedCount: result.modifiedCount
+          });
 
-        // Update all bookings with this paymentId in database
-        const collections = db.collection("bookings");
+          const backupCollection = db.collection("backup");
+          const backupResult = await backupCollection.deleteMany({ paymentId: paymentId });
+          console.log(`✅ Deleted ${backupResult.deletedCount} backup entries for payment ${paymentId}`);
 
-        // Create a reliable Swedish timezone timestamp
-        const currentTime = new Date();
-        const swedenTime = new Intl.DateTimeFormat('sv-SE', {
-          timeZone: 'Europe/Stockholm',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit'
-        }).format(currentTime);
-
-        const result = await collections.updateMany(
-          { paymentId: paymentId },
-          {
-            $set: {
-              available: false,
-              payed: "Nets Easy",
-              updatedAt: new Date(),
-              bookedAt: swedenTime
+          // Delete discount usage after successful payment
+          try {
+            const discountCollection = db.collection("discounts");
+            const discountDeleteResult = await discountCollection.deleteOne({ usedBy: paymentId });
+            if (discountDeleteResult.deletedCount > 0) {
+              console.log(`✅ Deleted discount with usedBy: ${paymentId}`);
             }
+          } catch (discountError) {
+            console.error(`❌ Error deleting discount for payment ${paymentId}:`, discountError);
           }
-        );
 
-        console.log("Booking update result:", {
-          matchedCount: result.matchedCount,
-          modifiedCount: result.modifiedCount
-        });
+          try {
+            const bookings = await collections.find({ paymentId: paymentId }).toArray();
 
-        const backupCollection = db.collection("backup");
-        const backupResult = await backupCollection.deleteMany({ paymentId: paymentId });
-        console.log(`✅ Deleted ${backupResult.deletedCount} backup entries for payment ${paymentId}`);
+            if (bookings.length > 0 && bookings[0].email) {
+              // Prepare booking details for email
+              const email = bookings[0].email;
+              const bookingRef = bookings[0].bookingRef;
+              const bookingDate = new Date().toISOString().split('T')[0];
+              const totalCost = bookings.reduce((sum, booking) => sum + (booking.cost || 0), 0);
+              const tax = Math.round(totalCost * 0.20);
 
-        // Delete discount usage after successful payment
-        try {
-          const discountCollection = db.collection("discounts");
-          const discountDeleteResult = await discountCollection.deleteOne({ usedBy: paymentId });
-          if (discountDeleteResult.deletedCount > 0) {
-            console.log(`✅ Deleted discount with usedBy: ${paymentId}`);
+              // Prepare items for the email
+              const items = bookings.map(booking => ({
+                category: booking.category,
+                date: `${booking.day} ${booking.month} ${booking.year}`,
+                time: booking.time,
+                players: booking.players,
+                cost: booking.cost
+              }));
+
+              // Send confirmation email using the exact same template as send-confirmation
+              const emailHtml = `
+                  <div style="
+                      font-family: Arial, sans-serif;
+                      max-width: 600px;
+                      margin: 0 auto;
+                      padding: 60px 20px 40px 20px;
+                  ">
+                      <div style="
+                          display: flex;
+                          flex-direction: column;
+                          align-items: center;
+                          text-align: center;
+                          margin-bottom: 20px;
+                      ">
+                          <h1 style="color: #333;">Din order är bekräftad</h1>
+                      </div>
+
+                      <div style="
+                          background-color: rgb(17, 21, 22);
+                          border-radius: 15px;
+                          overflow: hidden;
+                      ">
+                          <div style="
+                              padding: 30px 10px;
+                              border-bottom: 1px solid rgb(29, 29, 29);
+                          ">
+                              <h2 style="
+                                  margin: 10px 0 5px 0;
+                                  color: white;
+                              ">Kvitto - Orderbekräftelse</h2>
+                              <p style="
+                                  margin: 0;
+                                  color: rgb(160, 160, 160);
+                              ">Bokningsnummer: ${bookingRef}</p>
+                              <p style="
+                                  margin: 0;
+                                  color: rgb(160, 160, 160);
+                              ">Bokningsdatum: ${bookingDate}</p>
+                          </div>
+
+                          <div style="
+                              padding: 20px 10px;
+                              color: rgb(160, 160, 160);
+                          ">
+                              <p style="margin: 0;">Mint Escape Room AB | Org.nr: 559382-8444 44</p>
+                              <p style="margin: 0;">Vaksalagatan 31 A 753 31 Uppsala</p>
+                          </div>
+
+                          <div style="padding: 5px 10px;">
+                              ${items.map(item => `
+                                  <div style="
+                                      display: flex;
+                                      justify-content: space-between;
+                                      align-items: center;
+                                      margin: 10px 0;
+                                      color: white;
+                                  ">
+                                      <div style="display: flex; align-items: center; gap: 10px;">
+                                          <p style="margin: 0;">
+                                              ${item.category} 
+                                              <span style="color: rgb(160, 160, 160);">
+                                                  ${item.date} ${item.time} ${item.players} spelare
+                                              </span>
+                                          </p>
+                                      </div>
+                                      <p style="margin: 0;">SEK ${item.cost}</p>
+                                  </div>
+                              `).join('')}
+                          </div>
+
+                          <div style="padding: 0 10px;">
+                              <div style="
+                                  display: grid;
+                                  grid-template-columns: auto auto;
+                                  justify-content: space-between;
+                                  padding: 15px 0;
+                                  color: white;
+                                  border-top: 1px solid rgb(29, 29, 29);
+                                  gap: 200px;
+                              ">
+                                  <p style="margin: 0;">Betalsätt</p>
+                                  <p style="margin: 0;">Nets Easy</p>
+                              </div>
+
+                              <div style="
+                                  display: grid;
+                                  grid-template-columns: auto auto;
+                                  justify-content: space-between;
+                                  padding: 15px 0;
+                                  color: white;
+                                  gap: 200px;
+                              ">
+                                  <p style="margin: 0;">Moms</p>
+                                  <p style="margin: 0;">SEK ${tax}</p>
+                              </div>
+
+                              <div style="
+                                  display: grid;
+                                  grid-template-columns: auto auto;
+                                  justify-content: space-between;
+                                  padding: 15px 0;
+                                  color: white;
+                                  border-top: 1px solid rgb(29, 29, 29);
+                                  gap: 200px;
+                              ">
+                                  <p style="margin: 0; font-weight: bold;">Totalt</p>
+                                  <p style="margin: 0; font-weight: bold;">SEK ${totalCost}</p>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              `;
+
+              await transporter.sendMail({
+                from: process.env.EMAIL_USER,
+                to: email,
+                subject: "Bokningsbekräftelse - Din betalning har mottagits",
+                html: emailHtml
+              });
+
+              console.log(`Confirmation email sent to ${email} for payment ${paymentId}`);
+            } else {
+              console.log(`No email found for payment ${paymentId} or no bookings associated`);
+            }
+          } catch (emailError) {
+            console.error("Error sending confirmation email:", emailError);
+            // Continue processing even if email fails
           }
-        } catch (discountError) {
-          console.error(`❌ Error deleting discount for payment ${paymentId}:`, discountError);
-        }
 
-        try {
-          const bookings = await collections.find({ paymentId: paymentId }).toArray();
-
-          if (bookings.length > 0 && bookings[0].email) {
-            // Prepare booking details for email
-            const email = bookings[0].email;
-            const bookingRef = bookings[0].bookingRef;
-            const bookingDate = new Date().toISOString().split('T')[0];
-            const totalCost = bookings.reduce((sum, booking) => sum + (booking.cost || 0), 0);
-            const tax = Math.round(totalCost * 0.20);
-
-            // Prepare items for the email
-            const items = bookings.map(booking => ({
-              category: booking.category,
-              date: `${booking.day} ${booking.month} ${booking.year}`,
-              time: booking.time,
-              players: booking.players,
-              cost: booking.cost
-            }));
-
-            // Send confirmation email using the exact same template as send-confirmation
-            const emailHtml = `
-                <div style="
-                    font-family: Arial, sans-serif;
-                    max-width: 600px;
-                    margin: 0 auto;
-                    padding: 60px 20px 40px 20px;
-                ">
-                    <div style="
-                        display: flex;
-                        flex-direction: column;
-                        align-items: center;
-                        text-align: center;
-                        margin-bottom: 20px;
-                    ">
-                        <h1 style="color: #333;">Din order är bekräftad</h1>
-                    </div>
-
-                    <div style="
-                        background-color: rgb(17, 21, 22);
-                        border-radius: 15px;
-                        overflow: hidden;
-                    ">
-                        <div style="
-                            padding: 30px 10px;
-                            border-bottom: 1px solid rgb(29, 29, 29);
-                        ">
-                            <h2 style="
-                                margin: 10px 0 5px 0;
-                                color: white;
-                            ">Kvitto - Orderbekräftelse</h2>
-                            <p style="
-                                margin: 0;
-                                color: rgb(160, 160, 160);
-                            ">Bokningsnummer: ${bookingRef}</p>
-                            <p style="
-                                margin: 0;
-                                color: rgb(160, 160, 160);
-                            ">Bokningsdatum: ${bookingDate}</p>
-                        </div>
-
-                        <div style="
-                            padding: 20px 10px;
-                            color: rgb(160, 160, 160);
-                        ">
-                            <p style="margin: 0;">Mint Escape Room AB | Org.nr: 559382-8444 44</p>
-                            <p style="margin: 0;">Vaksalagatan 31 A 753 31 Uppsala</p>
-                        </div>
-
-                        <div style="padding: 5px 10px;">
-                            ${items.map(item => `
-                                <div style="
-                                    display: flex;
-                                    justify-content: space-between;
-                                    align-items: center;
-                                    margin: 10px 0;
-                                    color: white;
-                                ">
-                                    <div style="display: flex; align-items: center; gap: 10px;">
-                                        <p style="margin: 0;">
-                                            ${item.category} 
-                                            <span style="color: rgb(160, 160, 160);">
-                                                ${item.date} ${item.time} ${item.players} spelare
-                                            </span>
-                                        </p>
-                                    </div>
-                                    <p style="margin: 0;">SEK ${item.cost}</p>
-                                </div>
-                            `).join('')}
-                        </div>
-
-                        <div style="padding: 0 10px;">
-                            <div style="
-                                display: grid;
-                                grid-template-columns: auto auto;
-                                justify-content: space-between;
-                                padding: 15px 0;
-                                color: white;
-                                border-top: 1px solid rgb(29, 29, 29);
-                                gap: 200px;
-                            ">
-                                <p style="margin: 0;">Betalsätt</p>
-                                <p style="margin: 0;">Nets Easy</p>
-                            </div>
-
-                            <div style="
-                                display: grid;
-                                grid-template-columns: auto auto;
-                                justify-content: space-between;
-                                padding: 15px 0;
-                                color: white;
-                                gap: 200px;
-                            ">
-                                <p style="margin: 0;">Moms</p>
-                                <p style="margin: 0;">SEK ${tax}</p>
-                            </div>
-
-                            <div style="
-                                display: grid;
-                                grid-template-columns: auto auto;
-                                justify-content: space-between;
-                                padding: 15px 0;
-                                color: white;
-                                border-top: 1px solid rgb(29, 29, 29);
-                                gap: 200px;
-                            ">
-                                <p style="margin: 0; font-weight: bold;">Totalt</p>
-                                <p style="margin: 0; font-weight: bold;">SEK ${totalCost}</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-
-            await transporter.sendMail({
-              from: process.env.EMAIL_USER,
-              to: email,
-              subject: "Bokningsbekräftelse - Din betalning har mottagits",
-              html: emailHtml
-            });
-
-            console.log(`Confirmation email sent to ${email} for payment ${paymentId}`);
-          } else {
-            console.log(`No email found for payment ${paymentId} or no bookings associated`);
+          if (paymentStates[paymentId]) {
+            delete paymentStates[paymentId];
+            console.log("Payment terminated from paymentStates:", paymentId);
           }
-        } catch (emailError) {
-          console.error("Error sending confirmation email:", emailError);
-          // Continue processing even if email fails
-        }
 
-        if (paymentStates[paymentId]) {
-          delete paymentStates[paymentId];
-          console.log("Payment terminated from paymentStates:", paymentId);
-        }
+          break;
+        default:
+          console.log("Unhandled event type:", event);
+      }
 
-        break;
-      default:
-        console.log("Unhandled event type:", event);
+      // Respond to the webhook request
+      res.status(200).send("Event received");
+    } catch (error) {
+      console.error("Error processing webhook event:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+// Add this route to your backend booking routes:
+
+router.post("/verify-booking-payment", async (req, res) => {
+  try {
+    const { paymentId } = req.body;
+
+    if (!paymentId) {
+      console.log("No paymentId provided in verification request");
+      return res.status(400).json({ error: "Payment ID is required" });
     }
 
-    // Respond to the webhook request
-    res.status(200).send("Event received");
+    console.log(`Verifying payment status for paymentId: ${paymentId}`);
+
+    // Check the database to see if the booking is marked as paid
+    const collections = db.collection("bookings");
+    const bookings = await collections.find({ paymentId: paymentId }).toArray();
+
+    if (bookings.length === 0) {
+      console.log(`No bookings found for paymentId: ${paymentId}`);
+      return res.json({
+        status: "NOT PAID",
+        message: "No bookings found for this payment ID"
+      });
+    }
+
+    // Check if all bookings with this paymentId are marked as paid
+    const allPaid = bookings.every(booking => 
+      booking.payed && booking.payed !== false
+    );
+
+    if (allPaid) {
+      console.log(`All bookings for paymentId ${paymentId} are marked as paid`);
+      return res.json({
+        status: "PAID",
+        paymentMethod: bookings[0].payed,
+        bookingCount: bookings.length,
+        bookings: bookings.map(booking => ({
+          category: booking.category,
+          date: `${booking.day} ${booking.month} ${booking.year}`,
+          time: booking.time,
+          cost: booking.cost,
+          bookingRef: booking.bookingRef
+        }))
+      });
+    } else {
+      console.log(`Some bookings for paymentId ${paymentId} are not yet marked as paid`);
+      return res.json({
+        status: "NOT PAID",
+        message: "Payment not yet processed",
+        bookingCount: bookings.length,
+        paidCount: bookings.filter(booking => booking.payed && booking.payed !== false).length
+      });
+    }
+
   } catch (error) {
-    console.error("Error processing webhook event:", error);
-    res.status(500).json({ error: error.message });
+    console.error("Error verifying booking payment:", error);
+    return res.status(500).json({ 
+      status: "ERROR",
+      error: error.message 
+    });
   }
-});
+}); 
 
 router.get("/v1/payments/:paymentId", async (req, res) => {
   try {
