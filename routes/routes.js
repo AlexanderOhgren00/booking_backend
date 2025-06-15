@@ -1838,16 +1838,36 @@ router.post("/swish-payment-confirmation", async (req, res) => {
     return res.status(400).json({ error: "Payment ID is required" });
   }
 
-  if (!paymentStates[paymentId]) {
+  // If payment is still in paymentStates, it means it's still pending
+  if (paymentStates[paymentId]) {
     return res.json({
-      status: "PAID"
-    })
+      status: "NOT PAID"
+    });
   }
 
-  res.json({
-    status: "NOT PAID"
-  })
+  // If not in paymentStates, check the database to see if it was actually paid
+  try {
+    const collections = db.collection("bookings");
+    const booking = await collections.findOne({ 
+      paymentId: paymentId,
+      payed: { $ne: false } // Check if payed is not false (could be "Swish", "Nets Easy", etc.)
+    });
 
+    if (booking) {
+      return res.json({
+        status: "PAID"
+      });
+    } else {
+      return res.json({
+        status: "NOT PAID"
+      });
+    }
+  } catch (error) {
+    console.error("Error checking payment status:", error);
+    return res.json({
+      status: "NOT PAID"
+    });
+  }
 });
 
 // Get all bookings for a specific day
