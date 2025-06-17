@@ -9,7 +9,7 @@ import fs from 'fs';
 import https from 'https';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import axios from 'axios';
+import axios from 'axios';  
 import nodemailer from 'nodemailer';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -605,6 +605,12 @@ router.post("/send-paylink", async (req, res) => {
 
           // Update all bookings with this paymentId in database
           const collections = db.collection("bookings");
+
+          const bookings = await collections.find({ paymentId: paymentId }).toArray();
+          const originalTotalCost = bookings.reduce((sum, b) => sum + (b.cost || 0), 0);
+          const amountPaid = orderData.amount.amount / 100;   // SEK
+          const giftCardUsed = originalTotalCost - amountPaid;
+          await handleGiftCardUpdate(bookings, giftCardUsed);
 
           // Create a reliable Swedish timezone timestamp
           const currentTime = new Date();
@@ -1968,6 +1974,12 @@ router.post("/swish/callback", async (req, res) => {
         const collections = db.collection("bookings");
         const paymentId = req.body.id;
 
+        const bookings = await collections.find({ paymentId: paymentId }).toArray();
+        const originalTotalCost = bookings.reduce((sum, b) => sum + (b.cost || 0), 0);
+        const amountPaid = parseFloat(req.body.amount);     // SEK
+        const giftCardUsed = originalTotalCost - amountPaid;
+        await handleGiftCardUpdate(bookings, giftCardUsed);
+
         // Create a reliable Swedish timezone timestamp
         const currentTime = new Date();
         const swedenTime = new Intl.DateTimeFormat('sv-SE', {
@@ -2897,6 +2909,223 @@ router.post("/reset-all-offers", async (req, res) => {
 });
 
 // Gift Card Routes
+
+const handleGiftCardUpdate = async (bookings, totalCost) => {
+  if (!bookings || bookings.length === 0) return;
+
+  const firstBooking = bookings[0];
+  const { giftCardReference } = firstBooking;
+
+  if (!giftCardReference) return;
+
+  try {
+      const giftCardCollections = db.collection("giftcards");
+      const giftCard = await giftCardCollections.findOne({ reference: giftCardReference });
+
+      if (giftCard && giftCard.payed) {
+          const amountToDeduct = Math.min(totalCost, giftCard.totalAmount);
+          const newTotalAmount = giftCard.totalAmount - amountToDeduct;
+
+          await giftCardCollections.updateOne(
+              { reference: giftCardReference },
+              { $set: { totalAmount: newTotalAmount, updatedAt: new Date() } }
+          );
+          console.log(`Gift card ${giftCardReference} updated. New balance: ${newTotalAmount}`);
+      }
+  } catch (error) {
+      console.error(`Error updating gift card ${giftCardReference}:`, error);
+  }
+};
+
+router.post("/confirm-with-giftcard", async (req, res) => {
+  const { combinedData, giftCardReference, totalCost, name, number, email } = req.body;
+  const bookingRef = `${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+  const collections = db.collection("bookings");
+
+  try {
+      const currentTime = new Date();
+      const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'Europe/Stockholm',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }).format(currentTime);
+
+      const bookingPromises = combinedData.map(data => {
+          const timeSlotId = `${data.year}-${data.month}-${data.day}-${data.categoryName.trim()}-${data.time.time}`;
+          return collections.updateOne(
+              { timeSlotId },
+              {
+                  $set: {
+                      available: false,
+                      payed: "Presentkort",
+                      updatedAt: new Date(),
+                      bookedAt: swedenTime,
+                      bookedBy: name,
+                      number,
+                      email,
+                      bookingRef,
+                      cost: data.time.cost,
+                      players: data.time.players,
+                      giftCardReference
+                  }
+              }
+          );
+      });
+
+      await Promise.all(bookingPromises);
+      const bookings = await collections.find({ bookingRef }).toArray();
+      await handleGiftCardUpdate(bookings, totalCost);
+      
+      console.log(`Booking confirmed with gift card. Ref: ${bookingRef}`);
+
+      try {
+        if (bookings.length > 0 && email) {
+          const bookingDate = new Date().toISOString().split('T')[0];
+          const tax = Math.round(totalCost * 0.20);
+
+          const items = bookings.map(booking => ({
+            category: booking.category,
+            date: `${booking.day} ${booking.month} ${booking.year}`,
+            time: booking.time,
+            players: booking.players,
+            cost: booking.cost
+          }));
+
+          const emailHtml = `
+              <div style="
+                  font-family: Arial, sans-serif;
+                  max-width: 600px;
+                  margin: 0 auto;
+                  padding: 60px 20px 40px 20px;
+              ">
+                  <div style="
+                      display: flex;
+                      flex-direction: column;
+                      align-items: center;
+                      text-align: center;
+                      margin-bottom: 20px;
+                  ">
+                      <h1 style="color: #333;">Din order är bekräftad</h1>
+                  </div>
+
+                  <div style="
+                      background-color: rgb(17, 21, 22);
+                      border-radius: 15px;
+                      overflow: hidden;
+                  ">
+                      <div style="
+                          padding: 30px 10px;
+                          border-bottom: 1px solid rgb(29, 29, 29);
+                      ">
+                          <h2 style="
+                              margin: 10px 0 5px 0;
+                              color: white;
+                          ">Kvitto - Orderbekräftelse</h2>
+                          <p style="
+                              margin: 0;
+                              color: rgb(160, 160, 160);
+                          ">Bokningsnummer: ${bookingRef}</p>
+                          <p style="
+                              margin: 0;
+                              color: rgb(160, 160, 160);
+                          ">Bokningsdatum: ${bookingDate}</p>
+                      </div>
+
+                      <div style="
+                          padding: 20px 10px;
+                          color: rgb(160, 160, 160);
+                      ">
+                          <p style="margin: 0;">Mint Escape Room AB | Org.nr: 559382-8444 44</p>
+                          <p style="margin: 0;">Vaksalagatan 31 A 753 31 Uppsala</p>
+                      </div>
+
+                      <div style="padding: 5px 10px;">
+                          ${items.map(item => `
+                              <div style="
+                                  display: flex;
+                                  justify-content: space-between;
+                                  align-items: center;
+                                  margin: 10px 0;
+                                  color: white;
+                              ">
+                                  <div style="display: flex; align-items: center; gap: 10px;">
+                                      <p style="margin: 0;">
+                                          ${item.category} 
+                                          <span style="color: rgb(160, 160, 160);">
+                                              ${item.date} ${item.time} ${item.players} spelare
+                                          </span>
+                                      </p>
+                                  </div>
+                                  <p style="margin: 0;">SEK ${item.cost}</p>
+                              </div>
+                          `).join('')}
+                      </div>
+
+                      <div style="padding: 0 10px;">
+                          <div style="
+                              display: grid;
+                              grid-template-columns: auto auto;
+                              justify-content: space-between;
+                              padding: 15px 0;
+                              color: white;
+                              border-top: 1px solid rgb(29, 29, 29);
+                              gap: 200px;
+                          ">
+                              <p style="margin: 0;">Betalsätt</p>
+                              <p style="margin: 0;">Presentkort</p>
+                          </div>
+
+                          <div style="
+                              display: grid;
+                              grid-template-columns: auto auto;
+                              justify-content: space-between;
+                              padding: 15px 0;
+                              color: white;
+                              gap: 200px;
+                          ">
+                              <p style="margin: 0;">Moms</p>
+                              <p style="margin: 0;">SEK ${tax}</p>
+                          </div>
+
+                          <div style="
+                              display: grid;
+                              grid-template-columns: auto auto;
+                              justify-content: space-between;
+                              padding: 15px 0;
+                              color: white;
+                              border-top: 1px solid rgb(29, 29, 29);
+                              gap: 200px;
+                          ">
+                              <p style="margin: 0; font-weight: bold;">Totalt</p>
+                              <p style="margin: 0; font-weight: bold;">SEK ${totalCost}</p>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          `;
+
+          await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: "Bokningsbekräftelse - Din betalning har mottagits",
+            html: emailHtml
+          });
+
+          console.log(`Confirmation email sent to ${email} for booking ${bookingRef}`);
+        } else {
+          console.log(`No email provided for booking ${bookingRef} or no bookings associated`);
+        }
+      } catch (emailError) {
+        console.error("Error sending confirmation email:", emailError);
+      }
+
+      res.status(200).json({ message: "Booking confirmed successfully" });
+
+  } catch (error) {
+    console.error("Error confirming with gift card:", error);
+    res.status(500).json({ error: "Failed to confirm booking with gift card" });
+  }
+});
 
 // Store gift card in database
 router.post("/giftcard", async (req, res) => {
