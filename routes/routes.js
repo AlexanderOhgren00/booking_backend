@@ -25,6 +25,47 @@ const MONTHS = [
 
 const paymentStates = {};
 
+// GA4 Tracking Function
+async function trackBookingCompleted() {
+  try {
+    const measurementId = process.env.GA4_MEASUREMENT_ID; // e.g., 'G-XXXXXXXXXX'
+    const apiSecret = process.env.GA4_API_SECRET; // From GA4 > Admin > Data Streams > Measurement Protocol API secrets
+    
+    if (!measurementId || !apiSecret) {
+      console.log('GA4 tracking not configured - skipping');
+      return;
+    }
+
+    const clientId = `${Date.now()}.${Math.random()}`; // Generate unique client ID
+    
+    const eventData = {
+      client_id: clientId,
+      events: [{
+        name: 'bokning_avslutad'
+      }]
+    };
+
+    const response = await fetch(
+      `https://www.google-analytics.com/mp/collect?measurement_id=${measurementId}&api_secret=${apiSecret}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(eventData)
+      }
+    );
+
+    if (response.ok) {
+      console.log(`✅ GA4 bokning_avslutad event sent successfully`);
+    } else {
+      console.error(`❌ GA4 tracking failed:`, response.status, await response.text());
+    }
+  } catch (error) {
+    console.error('Error sending GA4 tracking:', error);
+  }
+}
+
 // Configure nodemailer transporter
 const transporter = nodemailer.createTransport({
   host: "mailcluster.loopia.se",
@@ -640,6 +681,11 @@ router.post("/send-paylink", async (req, res) => {
             matchedCount: result.matchedCount,
             modifiedCount: result.modifiedCount
           });
+
+          // Send GA4 tracking for completed booking
+          if (result.modifiedCount > 0) {
+            await trackBookingCompleted();
+          }
 
           const backupCollection = db.collection("backup");
           const backupResult = await backupCollection.deleteMany({ paymentId: paymentId });
@@ -1998,6 +2044,11 @@ router.post("/swish/callback", async (req, res) => {
           { $set: { available: false, payed: "Swish", updatedAt: new Date(), bookedAt: swedenTime } }
         );
         console.log("Booking update result:", result);
+
+        // Send GA4 tracking for completed booking
+        if (result.modifiedCount > 0) {
+          await trackBookingCompleted();
+        }
 
         const backupCollection = db.collection("backup");
         const backupResult = await backupCollection.deleteMany({ paymentId: paymentId });
