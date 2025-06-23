@@ -2176,6 +2176,113 @@ router.post("/swish/callback", async (req, res) => {
           parseResult: message.match(/([A-Z\s]+)\s+(\d+)\/(\w+)\s+(\d{2}:\d{2})/)
         });
       }
+    } else if (status === 'ERROR') {
+      try {
+        console.log(`Swish payment failed: ${req.body.errorMessage} (${req.body.errorCode})`);
+        const paymentId = req.body.id;
+
+        // First, check what bookings exist with this paymentId
+        const collections = db.collection("bookings");
+        const existingBookings = await collections.find({ paymentId: paymentId }).toArray();
+        console.log(`Found ${existingBookings.length} bookings with paymentId: ${paymentId}`);
+
+        if (existingBookings.length > 0) {
+          // Reset all bookings with this paymentId to available state
+          const updateResult = await collections.updateMany(
+            { paymentId: paymentId,
+              available: "occupied"
+             },
+            {
+              $set: {
+                available: true,
+                players: 0,
+                payed: null,
+                cost: 0,
+                bookedBy: null,
+                number: null,
+                email: null,
+                info: null,
+                bookingRef: null,
+                paymentId: null, // Clear the paymentId AFTER we found the bookings
+                updatedAt: new Date()
+              }
+            }
+          );
+          
+          console.log(`✅ Reset ${updateResult.modifiedCount} bookings for failed payment ${paymentId}`);
+        } else {
+          // No bookings found - might already be cleaned up
+          console.log(`⚠️ No bookings found with paymentId: ${paymentId} - might already be cleaned up`);
+        }
+
+        // Clean up payment states
+        if (paymentStates[paymentId]) {
+          delete paymentStates[paymentId];
+          console.log(`Removed failed payment ${paymentId} from paymentStates`);
+        }
+
+        // Terminate the payment on Swish provider
+        try {
+          console.log(`Attempting to terminate payment ${paymentId} on Swish provider`);
+          
+          // Load certificates for Swish API (use different variable name)
+          const swishCert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
+          const swishKey = fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), 'utf8');
+          const swishCa = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), 'utf8');
+
+          const httpsAgent = new https.Agent({
+            cert: swishCert,
+            key: swishKey,
+            ca: swishCa,
+            minVersion: 'TLSv1.2',
+            rejectUnauthorized: false
+          });
+
+          const client = axios.create({ httpsAgent });
+
+          const cancelResponse = await client.patch(
+            `https://cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests/${paymentId}`,
+            [{
+              "op": "replace",
+              "path": "/status",
+              "value": "cancelled"
+            }],
+            {
+              headers: {
+                "Content-Type": "application/json-patch+json"
+              }
+            }
+          );
+          
+          if (cancelResponse.status === 200 || cancelResponse.status === 204) {
+            console.log(`✅ Payment ${paymentId} terminated successfully on Swish provider`);
+          } else {
+            console.error(`❌ Failed to terminate payment ${paymentId} on provider:`, cancelResponse.status, cancelResponse.data);
+          }
+        } catch (terminateError) {
+          console.error(`❌ Error terminating payment ${paymentId} on Swish provider:`, terminateError.message);
+        }
+
+        // Clean up any discounts used by this payment
+        try {
+          const discountCollection = db.collection("discounts");
+          const discountDeleteResult = await discountCollection.deleteOne({ usedBy: paymentId });
+          if (discountDeleteResult.deletedCount > 0) {
+            console.log(`✅ Cleaned up discount for failed payment ${paymentId}`);
+          }
+        } catch (discountError) {
+          console.error(`❌ Error cleaning up discount for failed payment ${paymentId}:`, discountError);
+        }
+
+        // Broadcast update to clients
+        broadcast({
+          type: "timeUpdate",
+          message: "Failed payment slots reset"
+        });
+
+      } catch (cleanupError) {
+        console.error('Error cleaning up failed Swish payment:', cleanupError);
+      }
     }
 
     // Always return 200 OK to Swish
