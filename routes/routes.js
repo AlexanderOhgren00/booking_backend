@@ -156,33 +156,30 @@ async function cleanUpPaymentStates() {
             console.log(`⚠️ Booking found but not modified for timeSlotId: ${timeSlotId}`);
           } else {
             console.log(`✅ Successfully reset booking for timeSlotId: ${timeSlotId}`);
+            try {
+              console.log(`Attempting to terminate payment ${paymentId} on payment provider`);
+              const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
+                method: "PUT",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": key,
+                },
+              });
+      
+              if (response.ok) {
+                console.log(`✅ Payment ${paymentId} terminated successfully on payment provider`);
+              } else {
+                console.error(`❌ Failed to terminate payment ${paymentId} on provider:`, await response.text());
+              }
+            } catch (error) {
+              console.error(`❌ Error terminating payment ${paymentId}:`, error);
+            }
           }
         } catch (updateError) {
           console.error(`❌ Error processing booking reset for ${timeSlotId}:`, updateError);
           console.error(`Error stack:`, updateError.stack);
         }
       }
-
-      // Terminate the payment on the payment provider
-      try {
-        console.log(`Attempting to terminate payment ${paymentId} on payment provider`);
-        const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": key,
-          },
-        });
-
-        if (response.ok) {
-          console.log(`✅ Payment ${paymentId} terminated successfully on payment provider`);
-        } else {
-          console.error(`❌ Failed to terminate payment ${paymentId} on provider:`, await response.text());
-        }
-      } catch (error) {
-        console.error(`❌ Error terminating payment ${paymentId}:`, error);
-      }
-
       // Remove from paymentStates
       console.log(`Removing payment ${paymentId} from paymentStates`);
       delete paymentStates[paymentId];
