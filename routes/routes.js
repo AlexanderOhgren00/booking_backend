@@ -684,9 +684,22 @@ router.post("/send-paylink", async (req, res) => {
             await trackBookingCompleted();
           }
 
-          const backupCollection = db.collection("backup");
-          const backupResult = await backupCollection.deleteMany({ paymentId: paymentId });
-          console.log(`✅ Deleted ${backupResult.deletedCount} backup entries for payment ${paymentId}`);
+          // Delete backup entries by timeSlotId for each booking
+          try {
+            const backupCollection = db.collection("backup");
+            let totalDeleted = 0;
+            for (const booking of bookings) {
+              if (booking.timeSlotId) {
+                const backupResult = await backupCollection.deleteMany({ timeSlotId: booking.timeSlotId });
+                totalDeleted += backupResult.deletedCount;
+                console.log(`✅ Deleted ${backupResult.deletedCount} backup entries for timeSlotId: ${booking.timeSlotId}`);
+              }
+            }
+            console.log(`✅ Total deleted backup entries: ${totalDeleted}`);
+          } catch (backupError) {
+            console.error(`❌ Error deleting backup entries:`, backupError);
+            // Continue processing even if backup deletion fails
+          }
 
           // Delete discount usage after successful payment
           try {
@@ -2047,9 +2060,22 @@ router.post("/swish/callback", async (req, res) => {
           await trackBookingCompleted();
         }
 
-        const backupCollection = db.collection("backup");
-        const backupResult = await backupCollection.deleteMany({ paymentId: paymentId });
-        console.log(`✅ Deleted ${backupResult.deletedCount} backup entries for payment ${paymentId}`);
+        // Delete backup entries by timeSlotId for each booking
+        try {
+          const backupCollection = db.collection("backup");
+          let totalDeleted = 0;
+          for (const booking of bookings) {
+            if (booking.timeSlotId) {
+              const backupResult = await backupCollection.deleteMany({ timeSlotId: booking.timeSlotId });
+              totalDeleted += backupResult.deletedCount;
+              console.log(`✅ Deleted ${backupResult.deletedCount} backup entries for timeSlotId: ${booking.timeSlotId}`);
+            }
+          }
+          console.log(`✅ Total deleted backup entries: ${totalDeleted}`);
+        } catch (backupError) {
+          console.error(`❌ Error deleting backup entries:`, backupError);
+          // Continue processing even if backup deletion fails
+        }
 
         // Delete discount usage after successful payment
         try {
@@ -2063,9 +2089,7 @@ router.post("/swish/callback", async (req, res) => {
         }
 
         try {
-          // Get the customer email and booking details for confirmation email
-          const bookings = await collections.find({ paymentId: paymentId }).toArray();
-
+          // Use the existing bookings array for confirmation email
           if (bookings.length > 0 && bookings[0].email) {
             // Prepare booking details for email
             const email = bookings[0].email;
