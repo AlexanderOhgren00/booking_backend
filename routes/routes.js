@@ -471,6 +471,23 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       }
     }
 
+    // Ensure paymentId is saved on the affected bookings so the webhook can update them later
+    try {
+      const bookingCollection = db.collection("bookings");
+      const slotIds = body.combinedData.map(item =>
+        `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`
+      );
+
+      const updateResult = await bookingCollection.updateMany(
+        { timeSlotId: { $in: slotIds } },
+        { $set: { paymentId } }
+      );
+
+      console.log(`✅ Associated paymentId ${paymentId} with ${updateResult.modifiedCount} booking(s)`);
+    } catch (associateError) {
+      console.error(`❌ Error associating paymentId with bookings:`, associateError);
+    }
+
     for (const existingPaymentId in paymentStates) {
       const existingData = paymentStates[existingPaymentId].data;
       console.log(existingData, "existingData");
