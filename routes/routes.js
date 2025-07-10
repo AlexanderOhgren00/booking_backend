@@ -477,7 +477,7 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       const slotIds = body.combinedData.map(item =>
         `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`
       );
-
+      console.log(slotIds, "slotIds");
       const updateResult = await bookingCollection.updateMany(
         { timeSlotId: { $in: slotIds } },
         { $set: { paymentId } }
