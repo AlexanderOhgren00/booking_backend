@@ -407,7 +407,7 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
 
       for (const item of body.combinedData) {
         // Create timeSlotId from booking data
-        const timeSlotId = `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`;
+        const timeSlotId = `${item.year}-${item.month}-${item.day}-${item.category}-${item.time.time}`;
 
         console.log(`Looking for booking with timeSlotId: ${timeSlotId}`);
 
@@ -475,7 +475,7 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     try {
       const bookingCollection = db.collection("bookings");
       const slotIds = body.combinedData.map(item =>
-        `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`
+        `${item.year}-${item.month}-${item.day}-${item.category}-${item.time.time}`
       );
       console.log(slotIds, "slotIds");
       const updateResult = await bookingCollection.updateMany(
