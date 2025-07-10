@@ -58,30 +58,49 @@ wss.on("connection", (ws) => {
   // Send a welcome message
   ws.send(JSON.stringify({ message: "Connected to WebSocket server" }));
 
+  // Set connection timeout (close after 1 hour of inactivity)
+  const connectionTimeout = setTimeout(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+          console.log("Closing idle WebSocket connection");
+          ws.close(1000, "Connection timeout");
+      }
+  }, 60 * 60 * 1000); // 1 hour
+
+  // Keep connection alive with ping/pong
+  const keepAliveInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+          ws.ping(); // Use built-in ping instead of custom message
+      } else {
+          clearInterval(keepAliveInterval);
+          clearTimeout(connectionTimeout);
+      }
+  }, 30000); // Every 30 seconds
+
   // Handle messages from clients
   ws.on("message", (message) => {
+    // Handle incoming messages here if needed
+  });
+  
+  // Handle pong responses
+  ws.on("pong", () => {
+    // Connection is alive
   });
   
   // Handle errors
   ws.on("error", (err) => {
       console.error("WebSocket error:", err);
-  });
-
-  // Handle disconnection
-  ws.on("close", () => {
-      console.log("Client disconnected");
-  });
-
-  // Keep connection alive
-  const keepAliveInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "ping" })); // Send a keep-alive message
-      }
-  }, 30000); // Every 30 seconds
-
-  ws.on("close", () => {
       clearInterval(keepAliveInterval);
+      clearTimeout(connectionTimeout);
   });
+
+  // Handle disconnection - SINGLE handler only
+  ws.on("close", (code, reason) => {
+      console.log(`Client disconnected: ${code} ${reason}`);
+      clearInterval(keepAliveInterval);
+      clearTimeout(connectionTimeout);
+  });
+
+  // Clear timeout on close (handled in main close handler above)
 });
 
 app.set('wss', wss);
