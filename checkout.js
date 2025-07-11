@@ -13,6 +13,13 @@ const app = express();
 const server = http.createServer(app);
 export const wss = new WebSocketServer({ server });
 
+// Track connections per IP to prevent abuse
+const connectionsByIP = new Map();
+const MAX_CONNECTIONS_PER_IP = 5;
+
+// Track all active connections for cleanup
+const activeConnections = new Set();
+
 const PORT = process.env.PORT || 3000;
 
 //origin:
@@ -52,21 +59,35 @@ const corsOptions = {
     maxAge: 600
 };
 
-wss.on("connection", (ws) => {
-  console.log("Client connected");
+wss.on("connection", (ws, req) => {
+  const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+  
+  // Check connection limit per IP
+  const currentConnections = connectionsByIP.get(clientIP) || 0;
+  if (currentConnections >= MAX_CONNECTIONS_PER_IP) {
+    console.log(`Connection limit exceeded for IP: ${clientIP}`);
+    ws.close(1008, "Too many connections");
+    return;
+  }
+  
+  // Track this connection
+  connectionsByIP.set(clientIP, currentConnections + 1);
+  activeConnections.add(ws);
+  
+  console.log(`Client connected from ${clientIP} (${currentConnections + 1} total)`);
 
   // Send a welcome message
   ws.send(JSON.stringify({ message: "Connected to WebSocket server" }));
 
-  // Set connection timeout (close after 1 hour of inactivity)
+  // Set connection timeout (close after 5 minutes of inactivity instead of 1 hour)
   const connectionTimeout = setTimeout(() => {
       if (ws.readyState === WebSocket.OPEN) {
           console.log("Closing idle WebSocket connection");
           ws.close(1000, "Connection timeout");
       }
-  }, 60 * 60 * 1000); // 1 hour
+  }, 5 * 60 * 1000); // 5 minutes instead of 1 hour
 
-  // Keep connection alive with ping/pong
+  // Keep connection alive with ping/pong (reduced to 20 seconds)
   const keepAliveInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
           ws.ping(); // Use built-in ping instead of custom message
@@ -74,7 +95,7 @@ wss.on("connection", (ws) => {
           clearInterval(keepAliveInterval);
           clearTimeout(connectionTimeout);
       }
-  }, 30000); // Every 30 seconds
+  }, 20000); // Every 20 seconds instead of 30
 
   // Handle messages from clients
   ws.on("message", (message) => {
@@ -98,10 +119,39 @@ wss.on("connection", (ws) => {
       console.log(`Client disconnected: ${code} ${reason}`);
       clearInterval(keepAliveInterval);
       clearTimeout(connectionTimeout);
+      
+      // Remove from active connections
+      activeConnections.delete(ws);
+      
+      // Decrement connection count for the IP
+      const currentConnections = connectionsByIP.get(clientIP) || 0;
+      if (currentConnections > 0) {
+          connectionsByIP.set(clientIP, currentConnections - 1);
+          if (currentConnections === 1) {
+              connectionsByIP.delete(clientIP); // Clean up if no more connections
+          }
+      }
   });
 
   // Clear timeout on close (handled in main close handler above)
 });
+
+// Periodic cleanup of stale connections every 2 minutes
+setInterval(() => {
+    let staleClosed = 0;
+    activeConnections.forEach(ws => {
+        if (ws.readyState !== WebSocket.OPEN) {
+            activeConnections.delete(ws);
+            staleClosed++;
+        }
+    });
+    
+    if (staleClosed > 0) {
+        console.log(`Cleaned up ${staleClosed} stale WebSocket connections`);
+    }
+    
+    console.log(`Active WebSocket connections: ${activeConnections.size}`);
+}, 2 * 60 * 1000); // Every 2 minutes
 
 app.set('wss', wss);
 app.use(timeout("20s"));
@@ -115,4 +165,35 @@ app.use(routes);
 server.listen(PORT, (err) => {
   if (err) console.log(err);
   console.log("Server listening on PORT", PORT);
+});
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, closing WebSocket connections...');
+  
+  activeConnections.forEach(ws => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.close(1000, 'Server shutdown');
+    }
+  });
+  
+  setTimeout(() => {
+    console.log('Server shutting down...');
+    process.exit(0);
+  }, 5000); // Give 5 seconds for connections to close
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, closing WebSocket connections...');
+  
+  activeConnections.forEach(ws => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.close(1000, 'Server shutdown');
+    }
+  });
+  
+  setTimeout(() => {
+    console.log('Server shutting down...');
+    process.exit(0);
+  }, 5000); // Give 5 seconds for connections to close
 });
