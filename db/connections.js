@@ -89,6 +89,11 @@ async function run() {
     await collection.createIndex({ year: 1, month: 1, day: 1 });
     await collection.createIndex({ available: 1 });
     await collection.createIndex({ category: 1 });
+    
+    // Composite indexes for bulk discount operations
+    await collection.createIndex({ year: 1, month: 1, day: 1, category: 1, time: 1, available: 1 });
+    await collection.createIndex({ category: 1, time: 1, available: 1 });
+    await collection.createIndex({ available: 1, category: 1, time: 1 });
 
     // Insert all bookings
     const result = await collection.insertMany(bookings);

@@ -1250,6 +1250,174 @@ router.get("/roomDiscounts", async (req, res) => {
   }
 });
 
+// Process discount updates in chunks to avoid timeouts
+async function processDiscountChunk(updates) {
+  const collections = db.collection("bookings");
+  const currentYear = new Date().getFullYear();
+  const years = Array.from(
+    { length: 2030 - currentYear + 1 },
+    (_, i) => currentYear + i
+  );
+
+  const allBulkOps = [];
+
+  for (const update of updates) {
+    const { time, category, discount, weekday, month } = update;
+    
+    const matchingDays = [];
+    for (const year of years) {
+      const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
+      
+      for (let day = 1; day <= daysInMonth; day++) {
+        const currentDate = new Date(year, MONTHS.indexOf(month), day);
+        if (currentDate.getDay() === weekday) {
+          matchingDays.push({ year, month, day });
+        }
+      }
+    }
+
+    if (matchingDays.length > 0) {
+      const bulkOp = {
+        updateMany: {
+          filter: {
+            $or: matchingDays.map(({ year, month, day }) => ({
+              year: year,
+              month: month,
+              day: day,
+              category: category,
+              time: time,
+              available: true
+            }))
+          },
+          update: { $set: { discount: discount } }
+        }
+      };
+      allBulkOps.push(bulkOp);
+    }
+  }
+
+  // Process with timeout protection
+  let totalModified = 0;
+  const BATCH_SIZE = 20;
+  const startTime = Date.now();
+  
+  for (let i = 0; i < allBulkOps.length; i += BATCH_SIZE) {
+    // Safety check for individual chunk timeout
+    if (Date.now() - startTime > 20000) { // 20 seconds per chunk
+      console.warn("Chunk timeout reached, stopping");
+      break;
+    }
+    
+    const batch = allBulkOps.slice(i, i + BATCH_SIZE);
+    const bulkResult = await collections.bulkWrite(batch, { 
+      ordered: false,
+      writeConcern: { w: 1, j: false }
+    });
+    
+    totalModified += bulkResult.modifiedCount;
+  }
+
+  return { modifiedCount: totalModified };
+}
+
+// Background processing function for large discount updates
+async function processDiscountUpdatesInBackground(updates) {
+  console.log("Starting background discount processing...");
+  
+  try {
+    const collections = db.collection("bookings");
+    const currentYear = new Date().getFullYear();
+    const years = Array.from(
+      { length: 2030 - currentYear + 1 },
+      (_, i) => currentYear + i
+    );
+
+    const allBulkOps = [];
+
+    for (const update of updates) {
+      const { time, category, discount, weekday, month } = update;
+      
+      const matchingDays = [];
+      for (const year of years) {
+        const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
+        
+        for (let day = 1; day <= daysInMonth; day++) {
+          const currentDate = new Date(year, MONTHS.indexOf(month), day);
+          if (currentDate.getDay() === weekday) {
+            matchingDays.push({ year, month, day });
+          }
+        }
+      }
+
+      if (matchingDays.length > 0) {
+        const bulkOp = {
+          updateMany: {
+            filter: {
+              $or: matchingDays.map(({ year, month, day }) => ({
+                year: year,
+                month: month,
+                day: day,
+                category: category,
+                time: time,
+                available: true
+              }))
+            },
+            update: { $set: { discount: discount } }
+          }
+        };
+        allBulkOps.push(bulkOp);
+      }
+    }
+
+    // Process all operations without timeout constraints
+    let totalModified = 0;
+    const BATCH_SIZE = 50; // Larger batches for background processing
+    
+    for (let i = 0; i < allBulkOps.length; i += BATCH_SIZE) {
+      const batch = allBulkOps.slice(i, i + BATCH_SIZE);
+      const bulkResult = await collections.bulkWrite(batch, { 
+        ordered: false,
+        writeConcern: { w: 1, j: false }
+      });
+      
+      totalModified += bulkResult.modifiedCount;
+      console.log(`Background processing: ${totalModified} bookings updated so far`);
+    }
+
+    console.log(`Background discount processing completed. Total modified: ${totalModified}`);
+    
+    // Broadcast completion
+    broadcast({
+      type: "bulkDiscountUpdateComplete",
+      data: { totalModified, updates }
+    });
+
+  } catch (error) {
+    console.error("Background processing error:", error);
+    broadcast({
+      type: "bulkDiscountUpdateError",
+      data: { error: error.message }
+    });
+  }
+}
+
+// Admin endpoint to create indexes on existing bookings collection
+router.post("/admin/createIndexes", async (req, res) => {
+  try {
+    const collection = db.collection("bookings");
+    
+    // Create composite indexes for bulk discount operations
+    await collection.createIndex({ year: 1, month: 1, day: 1, category: 1, time: 1, available: 1 });
+    await collection.createIndex({ category: 1, time: 1, available: 1 });
+    await collection.createIndex({ available: 1, category: 1, time: 1 });
+    
+    res.json({ message: "Indexes created successfully" });
+  } catch (error) {
+    console.error("Error creating indexes:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.patch("/bulkRoomDiscount", async (req, res) => {
   const { updates, bulk } = req.body;
 
@@ -1258,53 +1426,154 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
   }
 
   try {
+    // For very large operations, process in chunks
+    const estimatedOperations = updates.length * 6 * 4; // rough estimate
+    if (estimatedOperations > 800) {
+      // Process in multiple smaller requests to avoid timeout
+      const chunkSize = Math.ceil(updates.length / 3); // Split into 3 chunks
+      const totalChunks = Math.ceil(updates.length / chunkSize);
+      let completedChunks = 0;
+      let totalProcessed = 0;
+      
+      // Process chunks sequentially to avoid race conditions
+      const processChunksSequentially = async () => {
+        for (let i = 0; i < updates.length; i += chunkSize) {
+          const chunk = updates.slice(i, i + chunkSize);
+          
+          try {
+            // Add delay between chunks to avoid overwhelming the system
+            if (i > 0) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            
+            const result = await processDiscountChunk(chunk);
+            totalProcessed += result.modifiedCount;
+            completedChunks++;
+            
+            // Broadcast progress
+            broadcast({
+              type: "bulkDiscountProgress",
+              data: { 
+                processed: totalProcessed, 
+                total: estimatedOperations,
+                progress: Math.round((completedChunks / totalChunks) * 100),
+                chunk: completedChunks,
+                totalChunks: totalChunks
+              }
+            });
+            
+            // Broadcast completion when all chunks are done
+            if (completedChunks === totalChunks) {
+              broadcast({
+                type: "bulkDiscountComplete",
+                data: { 
+                  totalProcessed: totalProcessed,
+                  message: "All discount updates completed successfully"
+                }
+              });
+            }
+          } catch (error) {
+            console.error("Chunk processing error:", error);
+            broadcast({
+              type: "bulkDiscountError",
+              data: { 
+                error: error.message,
+                chunk: completedChunks + 1
+              }
+            });
+          }
+        }
+      };
+      
+      // Start processing in background
+      processChunksSequentially().catch(console.error);
+      
+      return res.json({
+        message: "Large discount update started in chunks",
+        estimatedOperations,
+        chunks: totalChunks,
+        status: "processing"
+      });
+    }
     const collections = db.collection("bookings");
-    const results = [];
     const currentYear = new Date().getFullYear();
-
-    // Get all years from current year up to 2030
     const years = Array.from(
       { length: 2030 - currentYear + 1 },
       (_, i) => currentYear + i
     );
 
+    // Build bulk operations for efficient processing
+    const allBulkOps = [];
+
     for (const update of updates) {
       const { time, category, discount, weekday, month } = update;
-
-      // Update specific month for all years
+      
+      // Pre-calculate matching days for all years to build filter criteria
+      const matchingDays = [];
+      
       for (const year of years) {
-        // Get the number of days in this month
         const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
-
-        // Check each day in the month
+        
         for (let day = 1; day <= daysInMonth; day++) {
-          // Check if this day matches the selected weekday
           const currentDate = new Date(year, MONTHS.indexOf(month), day);
           if (currentDate.getDay() === weekday) {
-            const result = await collections.updateOne(
-              {
+            matchingDays.push({ year, month, day });
+          }
+        }
+      }
+
+      // Create bulk write operations for this update
+      if (matchingDays.length > 0) {
+        const bulkOp = {
+          updateMany: {
+            filter: {
+              $or: matchingDays.map(({ year, month, day }) => ({
                 year: year,
                 month: month,
                 day: day,
                 category: category,
                 time: time,
-                available: true // Only update if available is true
-              },
-              {
-                $set: {
-                  discount: discount
-                }
-              }
-            );
-
-            if (result.modifiedCount > 0) {
-              results.push({
-                timeSlotId: `${year}-${month}-${day}-${category}-${time}`,
-                success: true
-              });
+                available: true
+              }))
+            },
+            update: {
+              $set: { discount: discount }
             }
           }
+        };
+        allBulkOps.push(bulkOp);
+      }
+    }
+
+    // Execute all bulk operations with timeout protection
+    let totalModified = 0;
+    const results = [];
+
+    if (allBulkOps.length > 0) {
+      // Larger batch size for better performance, with timeout protection
+      const BATCH_SIZE = 20;
+      const startTime = Date.now();
+      
+      for (let i = 0; i < allBulkOps.length; i += BATCH_SIZE) {
+        // Check if we're approaching the 30-second Heroku timeout
+        if (Date.now() - startTime > 25000) { // 25 seconds safety margin
+          console.warn("Approaching timeout, stopping batch processing");
+          break;
         }
+        
+        const batch = allBulkOps.slice(i, i + BATCH_SIZE);
+        const bulkResult = await collections.bulkWrite(batch, { 
+          ordered: false,
+          // Add write concern for faster processing
+          writeConcern: { w: 1, j: false }
+        });
+        
+        totalModified += bulkResult.modifiedCount;
+        results.push({
+          batchIndex: Math.floor(i / BATCH_SIZE),
+          modifiedCount: bulkResult.modifiedCount,
+          upsertedCount: bulkResult.upsertedCount
+        });
       }
     }
 
@@ -1317,11 +1586,12 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
     res.json({
       message: "Bulk discount update completed",
       results,
-      modifiedCount: results.length
+      totalModified,
+      operationsProcessed: allBulkOps.length
     });
 
   } catch (error) {
-    console.error(error);
+    console.error("Bulk discount update error:", error);
     res.status(500).json({ error: "Server error while updating discounts" });
   }
 });

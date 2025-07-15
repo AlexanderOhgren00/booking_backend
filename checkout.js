@@ -15,7 +15,22 @@ export const wss = new WebSocketServer({ server });
 
 // Track connections per IP to prevent abuse
 const connectionsByIP = new Map();
-const MAX_CONNECTIONS_PER_IP = 5;
+const MAX_CONNECTIONS_PER_IP = 10;
+
+// Track blocked IPs with timestamp
+const blockedIPs = new Map(); // IP -> blockedUntil timestamp
+const BLOCK_DURATION = 5 * 60 * 1000; // 5 minutes
+
+// Clean up expired blocks every minute
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, blockedUntil] of blockedIPs.entries()) {
+    if (now > blockedUntil) {
+      blockedIPs.delete(ip);
+      console.log(`Unblocked IP: ${ip}`);
+    }
+  }
+}, 60 * 1000);
 
 // Track all active connections for cleanup
 const activeConnections = new Set();
@@ -62,11 +77,24 @@ const corsOptions = {
 wss.on("connection", (ws, req) => {
   const clientIP = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
   
+  // Check if IP is currently blocked
+  const blockedUntil = blockedIPs.get(clientIP);
+  if (blockedUntil && Date.now() < blockedUntil) {
+    console.log(`Blocked IP attempted connection: ${clientIP}`);
+    ws.close(1008, "IP temporarily blocked");
+    return;
+  }
+  
   // Check connection limit per IP
   const currentConnections = connectionsByIP.get(clientIP) || 0;
   if (currentConnections >= MAX_CONNECTIONS_PER_IP) {
-    console.log(`Connection limit exceeded for IP: ${clientIP}`);
-    ws.close(1008, "Too many connections");
+    console.log(`Connection limit exceeded for IP: ${clientIP} - blocking for 5 minutes`);
+    
+    // Block this IP for 5 minutes
+    const blockUntil = Date.now() + BLOCK_DURATION;
+    blockedIPs.set(clientIP, blockUntil);
+    
+    ws.close(1008, "Too many connections - IP blocked");
     return;
   }
   
