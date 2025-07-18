@@ -107,13 +107,13 @@ wss.on("connection", (ws, req) => {
   // Send a welcome message
   ws.send(JSON.stringify({ message: "Connected to WebSocket server" }));
 
-  // Set connection timeout (close after 5 minutes of inactivity instead of 1 hour)
+  // Set connection timeout (close after 10 minutes of inactivity instead of 1 hour)
   const connectionTimeout = setTimeout(() => {
       if (ws.readyState === WebSocket.OPEN) {
           console.log("Closing idle WebSocket connection");
           ws.close(1000, "Connection timeout");
       }
-  }, 5 * 60 * 1000); // 5 minutes instead of 1 hour
+  }, 10 * 60 * 1000); // 10 minutes instead of 1 hour
 
   // Keep connection alive with ping/pong (reduced to 20 seconds)
   const keepAliveInterval = setInterval(() => {
