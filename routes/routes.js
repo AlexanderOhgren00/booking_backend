@@ -2123,18 +2123,88 @@ router.delete("/deleteRoomDiscount", async (req, res) => {
 
     // Reset discount to 0 for any bookings with this discount value
     if (PersonCost) {
-      console.log(`Resetting discount to 0 for bookings with discount = ${PersonCost}`);
+      console.log(`Starting discount reset process for discount = ${PersonCost}`);
 
       const bookingsCollection = db.collection("bookings");
-      const bookingUpdateResult = await bookingsCollection.updateMany(
-        { discount: PersonCost },
-        { $set: { discount: 0 } }
-      );
+      
+      // First, count how many bookings will be affected
+      const affectedCount = await bookingsCollection.countDocuments({ discount: PersonCost });
+      console.log(`Found ${affectedCount} bookings with discount ${PersonCost}`);
 
-      console.log(`Updated ${bookingUpdateResult.modifiedCount} bookings with discount ${PersonCost} to 0`);
+      if (affectedCount === 0) {
+        console.log("No bookings found with this discount value");
+        return res.status(200).json({ 
+          message: "Discount deleted successfully", 
+          bookingsUpdated: 0 
+        });
+      }
+
+      // If there are many bookings, use chunked processing
+      if (affectedCount > 500) {
+        console.log(`Large number of bookings (${affectedCount}). Starting background processing...`);
+        
+        // Start background processing
+        processDiscountDeletionInBackground(PersonCost, affectedCount).catch(error => {
+          console.error("Background processing error:", error);
+        });
+
+        // Return immediately to avoid timeout
+        res.status(200).json({ 
+          message: "Discount deleted successfully. Large number of bookings are being updated in background.",
+          bookingsUpdated: "processing",
+          totalBookingsToUpdate: affectedCount
+        });
+
+        broadcast({
+          type: "updateRoomDiscounts",
+          message: "Update",
+        });
+
+        return;
+      }
+
+      // For smaller datasets, process normally with timeout protection
+      const startTime = Date.now();
+      const BATCH_SIZE = 100;
+      let totalUpdated = 0;
+
+      // Process in batches to avoid overwhelming the system
+      const affectedBookings = await bookingsCollection.find({ discount: PersonCost }).toArray();
+      
+      for (let i = 0; i < affectedBookings.length; i += BATCH_SIZE) {
+        // Check timeout (25 seconds safety margin)
+        if (Date.now() - startTime > 25000) {
+          console.warn("Approaching timeout, switching to background processing");
+          
+          // Process remaining bookings in background
+          const remainingBookings = affectedBookings.slice(i);
+          processRemainingBookingsInBackground(remainingBookings).catch(error => {
+            console.error("Background processing error:", error);
+          });
+          
+          break;
+        }
+
+        const batch = affectedBookings.slice(i, i + BATCH_SIZE);
+        const batchIds = batch.map(booking => booking._id);
+        
+        const batchResult = await bookingsCollection.updateMany(
+          { _id: { $in: batchIds } },
+          { $set: { discount: 0 } },
+          { writeConcern: { w: 1, j: false } }
+        );
+
+        totalUpdated += batchResult.modifiedCount;
+        console.log(`Processed batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batchResult.modifiedCount} bookings updated`);
+      }
+
+      console.log(`Discount deletion completed. Updated ${totalUpdated} bookings.`);
     }
 
-    res.status(200).json({ message: "Discount deleted" });
+    res.status(200).json({ 
+      message: "Discount deleted successfully", 
+      bookingsUpdated: PersonCost ? totalUpdated : 0 
+    });
 
     broadcast({
       type: "updateRoomDiscounts",
@@ -2142,10 +2212,102 @@ router.delete("/deleteRoomDiscount", async (req, res) => {
     });
 
   } catch (error) {
-    console.error(error);
+    console.error("Error in deleteRoomDiscount:", error);
     res.status(500).json({ error: error.message });
   }
 });
+
+// Background processing function for large discount deletions
+async function processDiscountDeletionInBackground(PersonCost, totalCount) {
+  console.log(`Starting background processing for ${totalCount} bookings with discount ${PersonCost}`);
+  
+  try {
+    const bookingsCollection = db.collection("bookings");
+    const BATCH_SIZE = 200; // Larger batches for background processing
+    let processedCount = 0;
+
+    // Process in batches
+    while (processedCount < totalCount) {
+      const batch = await bookingsCollection.find({ discount: PersonCost })
+        .limit(BATCH_SIZE)
+        .toArray();
+
+      if (batch.length === 0) {
+        console.log("No more bookings to process");
+        break;
+      }
+
+      const batchIds = batch.map(booking => booking._id);
+      
+      const result = await bookingsCollection.updateMany(
+        { _id: { $in: batchIds } },
+        { $set: { discount: 0 } },
+        { writeConcern: { w: 1, j: false } }
+      );
+
+      processedCount += result.modifiedCount;
+      console.log(`Background processing: ${processedCount}/${totalCount} bookings updated`);
+
+      // Small delay to avoid overwhelming the system
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    console.log(`Background discount deletion completed. Updated ${processedCount} bookings.`);
+    
+    // Broadcast completion
+    broadcast({
+      type: "discountDeletionComplete",
+      data: { 
+        PersonCost, 
+        totalUpdated: processedCount,
+        message: "Discount deletion background processing completed"
+      }
+    });
+
+  } catch (error) {
+    console.error("Background processing error:", error);
+    broadcast({
+      type: "discountDeletionError",
+      data: { 
+        PersonCost, 
+        error: error.message 
+      }
+    });
+  }
+}
+
+// Helper function for processing remaining bookings in background
+async function processRemainingBookingsInBackground(remainingBookings) {
+  console.log(`Processing remaining ${remainingBookings.length} bookings in background`);
+  
+  try {
+    const bookingsCollection = db.collection("bookings");
+    const BATCH_SIZE = 100;
+    let processedCount = 0;
+
+    for (let i = 0; i < remainingBookings.length; i += BATCH_SIZE) {
+      const batch = remainingBookings.slice(i, i + BATCH_SIZE);
+      const batchIds = batch.map(booking => booking._id);
+      
+      const result = await bookingsCollection.updateMany(
+        { _id: { $in: batchIds } },
+        { $set: { discount: 0 } },
+        { writeConcern: { w: 1, j: false } }
+      );
+
+      processedCount += result.modifiedCount;
+      console.log(`Background processing: ${processedCount}/${remainingBookings.length} remaining bookings updated`);
+
+      // Small delay to avoid overwhelming the system
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+
+    console.log(`Background processing of remaining bookings completed. Updated ${processedCount} bookings.`);
+
+  } catch (error) {
+    console.error("Error processing remaining bookings:", error);
+  }
+}
 
 router.post("/roomDiscounts", async (req, res) => {
   const { key, PersonCost, color } = req.body;
