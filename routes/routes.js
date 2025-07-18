@@ -2334,6 +2334,39 @@ router.post("/roomDiscounts", async (req, res) => {
   }
 });
 
+// Update room discount color
+router.patch("/updateRoomDiscountColor", async (req, res) => {
+  const { key, color } = req.body;
+
+  if (!key || !color) {
+    return res.status(400).json({ error: "Discount key and color are required" });
+  }
+
+  try {
+    const collections = db.collection("roomDiscounts");
+
+    const result = await collections.updateOne(
+      { key },
+      { $set: { color } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "Discount not found" });
+    }
+
+    res.status(200).json({ message: "Discount color updated successfully" });
+
+    // Broadcast the update to all connected clients
+    broadcast({
+      type: "updateRoomDiscounts",
+      message: "Update",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get("/discounts", async (req, res) => {
   try {
     const discounts = await db.collection("discounts").find({}).toArray();
