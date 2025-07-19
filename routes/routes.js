@@ -2567,27 +2567,34 @@ router.post("/validateDiscount", async (req, res) => {
       });
     }
 
-    // Calculate discount amount
+    // Calculate discount amount based on type
     let discountAmount = 0;
+    let newTotalAmount = totalAmount;
+    
     switch (discountDoc.discountType) {
       case 'total_fixed':
         discountAmount = discountDoc.amount;
+        newTotalAmount = Math.max(totalAmount - discountAmount, 850);
         break;
       case 'total_percentage':
         discountAmount = (totalAmount * discountDoc.amount) / 100;
+        newTotalAmount = Math.max(totalAmount - discountAmount, 850);
         break;
       case 'per_player_fixed':
-        discountAmount = discountDoc.amount * players;
+        // For per-player fixed, replace the per-player cost with discount amount
+        newTotalAmount = Math.max(discountDoc.amount * players, 850);
+        discountAmount = totalAmount - newTotalAmount;
         break;
       case 'per_player_percentage':
-        discountAmount = (totalAmount * discountDoc.amount * players) / 100;
+        // For per-player percentage, apply percentage to current per-player cost
+        const currentPerPlayerCost = totalAmount / players;
+        const discountedPerPlayerCost = currentPerPlayerCost * (1 - discountDoc.amount / 100);
+        newTotalAmount = Math.max(discountedPerPlayerCost * players, 850);
+        discountAmount = totalAmount - newTotalAmount;
         break;
       default:
         discountAmount = 0;
     }
-
-    // Ensure discount doesn't exceed total amount
-    discountAmount = Math.min(discountAmount, totalAmount);
 
     res.status(200).json({ 
       valid: true, 
