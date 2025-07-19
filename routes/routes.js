@@ -2578,7 +2578,7 @@ router.post("/validateDiscount", async (req, res) => {
         break;
       case 'total_percentage':
         discountAmount = (totalAmount * discountDoc.amount) / 100;
-        newTotalAmount = Math.max(totalAmount - discountAmount, 850);
+        newTotalAmount = Math.max(Math.ceil(totalAmount - discountAmount), 850);
         break;
       case 'per_player_fixed':
         // For per-player fixed, replace the per-player cost with discount amount
@@ -2589,7 +2589,7 @@ router.post("/validateDiscount", async (req, res) => {
         // For per-player percentage, apply percentage to current per-player cost
         const currentPerPlayerCost = totalAmount / players;
         const discountedPerPlayerCost = currentPerPlayerCost * (1 - discountDoc.amount / 100);
-        newTotalAmount = Math.max(discountedPerPlayerCost * players, 850);
+        newTotalAmount = Math.max(Math.ceil(discountedPerPlayerCost * players), 850);
         discountAmount = totalAmount - newTotalAmount;
         break;
       default:
