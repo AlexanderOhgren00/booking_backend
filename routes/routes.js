@@ -2378,15 +2378,18 @@ router.get("/discounts", async (req, res) => {
 });
 
 router.delete("/deleteDiscount", async (req, res) => {
-  const { key } = req.body;
+  const { key, code } = req.body;
+  const discountCode = code || key; // Support both old and new field names
 
-  if (!key) {
-    return res.status(400).json({ error: "Discount key is required" });
+  if (!discountCode) {
+    return res.status(400).json({ error: "Discount code is required" });
   }
 
   try {
     const collections = db.collection("discounts");
-    const result = await collections.deleteOne({ key });
+    const result = await collections.deleteOne({ 
+      $or: [{ key: discountCode }, { code: discountCode }] 
+    });
 
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "Discount not found" });
@@ -2406,23 +2409,61 @@ router.delete("/deleteDiscount", async (req, res) => {
 });
 
 router.post("/createDiscount", async (req, res) => {
-  const { key, sale, currency, expiryDate, perPlayer, discountType, usedBy } = req.body;
+  const { 
+    code, 
+    description, 
+    discountType, 
+    amount, 
+    usageType, 
+    maxUses, 
+    expiryDate, 
+    isActive, 
+    minimumPlayers, 
+    minimumAmount, 
+    applicableCategories 
+  } = req.body;
 
-  if (!key || !sale || !currency || !expiryDate) {
-    return res.status(400).json({ error: "All fields are required" });
+  if (!code || !discountType || amount === undefined || amount === null) {
+    return res.status(400).json({ error: "Code, discount type, and amount are required" });
+  }
+
+  if (!['total_fixed', 'total_percentage', 'per_player_fixed', 'per_player_percentage'].includes(discountType)) {
+    return res.status(400).json({ error: "Invalid discount type" });
+  }
+
+  if (!['infinite', 'single_use'].includes(usageType || 'infinite')) {
+    return res.status(400).json({ error: "Invalid usage type" });
   }
 
   try {
     const collections = db.collection("discounts");
 
-    const discountExist = await collections.findOne({ key });
+    const discountExist = await collections.findOne({ code });
     if (discountExist) {
       return res.status(400).json({ error: "Discount code already exists" });
     }
 
-    await collections.insertOne({ key, sale, currency, perPlayer, expiryDate, discountType, usedBy });
+    const discountDocument = {
+      code,
+      description: description || "",
+      discountType,
+      amount: Number(amount),
+      usageType: usageType || 'infinite',
+      maxUses: maxUses ? Number(maxUses) : null,
+      usedCount: 0,
+      usedBy: [],
+      expiryDate: expiryDate ? new Date(expiryDate) : null,
+      isActive: isActive !== false,
+      minimumPlayers: minimumPlayers ? Number(minimumPlayers) : null,
+      minimumAmount: minimumAmount ? Number(minimumAmount) : null,
+      applicableCategories: applicableCategories || [],
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
 
-    res.status(201).json({ message: "Discount created" });
+    await collections.insertOne(discountDocument);
+
+    res.status(201).json({ message: "Discount created successfully" });
 
     broadcast({
       type: "updateDiscount",
@@ -2441,11 +2482,173 @@ router.post("/discounts", async (req, res) => {
   try {
     const collections = db.collection("discounts");
 
-    const discountDoc = await collections.findOne({ key: discount });
+    const discountDoc = await collections.findOne({ code: discount });
     if (!discountDoc) {
       return res.status(400).json({ error: "Invalid discount code" });
     }
     res.status(200).json({ message: "Discount applied", discount: discountDoc });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// New enhanced discount validation endpoint
+router.post("/validateDiscount", async (req, res) => {
+  const { code, players, category, totalAmount, bookingId } = req.body;
+
+  if (!code) {
+    return res.status(400).json({ error: "Discount code is required" });
+  }
+
+  try {
+    const collections = db.collection("discounts");
+    const discountDoc = await collections.findOne({ code });
+
+    if (!discountDoc) {
+      return res.status(400).json({ 
+        valid: false, 
+        message: "Invalid discount code" 
+      });
+    }
+
+    // Check if discount is active
+    if (!discountDoc.isActive) {
+      return res.status(400).json({ 
+        valid: false, 
+        message: "This discount code is no longer active" 
+      });
+    }
+
+    // Check expiry date
+    if (discountDoc.expiryDate && new Date() > discountDoc.expiryDate) {
+      return res.status(400).json({ 
+        valid: false, 
+        message: "This discount code has expired" 
+      });
+    }
+
+    // Check usage limits
+    if (discountDoc.usageType === 'single_use' && discountDoc.usedBy.includes(bookingId)) {
+      return res.status(400).json({ 
+        valid: false, 
+        message: "This discount code has already been used for this booking" 
+      });
+    }
+
+    if (discountDoc.maxUses && discountDoc.usedCount >= discountDoc.maxUses) {
+      return res.status(400).json({ 
+        valid: false, 
+        message: "This discount code has reached its usage limit" 
+      });
+    }
+
+    // Check minimum requirements
+    if (discountDoc.minimumPlayers && players < discountDoc.minimumPlayers) {
+      return res.status(400).json({ 
+        valid: false, 
+        message: `This discount requires at least ${discountDoc.minimumPlayers} players` 
+      });
+    }
+
+    if (discountDoc.minimumAmount && totalAmount < discountDoc.minimumAmount) {
+      return res.status(400).json({ 
+        valid: false, 
+        message: `This discount requires a minimum booking amount of ${discountDoc.minimumAmount} SEK` 
+      });
+    }
+
+    // Check applicable categories
+    if (discountDoc.applicableCategories.length > 0 && !discountDoc.applicableCategories.includes(category)) {
+      return res.status(400).json({ 
+        valid: false, 
+        message: "This discount is not applicable to the selected room category" 
+      });
+    }
+
+    // Calculate discount amount
+    let discountAmount = 0;
+    switch (discountDoc.discountType) {
+      case 'total_fixed':
+        discountAmount = discountDoc.amount;
+        break;
+      case 'total_percentage':
+        discountAmount = (totalAmount * discountDoc.amount) / 100;
+        break;
+      case 'per_player_fixed':
+        discountAmount = discountDoc.amount * players;
+        break;
+      case 'per_player_percentage':
+        discountAmount = (totalAmount * discountDoc.amount * players) / 100;
+        break;
+      default:
+        discountAmount = 0;
+    }
+
+    // Ensure discount doesn't exceed total amount
+    discountAmount = Math.min(discountAmount, totalAmount);
+
+    res.status(200).json({ 
+      valid: true, 
+      discountAmount: Math.round(discountAmount),
+      appliedType: discountDoc.discountType,
+      message: "Discount applied successfully",
+      discount: discountDoc
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Discount usage tracking endpoint
+router.patch("/useDiscount/:code", async (req, res) => {
+  const { code } = req.params;
+  const { bookingId, players, originalAmount } = req.body;
+
+  if (!code || !bookingId) {
+    return res.status(400).json({ error: "Code and booking ID are required" });
+  }
+
+  try {
+    const collections = db.collection("discounts");
+    const discountDoc = await collections.findOne({ code });
+
+    if (!discountDoc) {
+      return res.status(400).json({ error: "Invalid discount code" });
+    }
+
+    // Update usage tracking
+    const updateData = {
+      usedCount: discountDoc.usedCount + 1,
+      updatedAt: new Date()
+    };
+
+    // Add booking ID to usedBy array if not already present
+    if (!discountDoc.usedBy.includes(bookingId)) {
+      updateData.usedBy = [...discountDoc.usedBy, bookingId];
+    }
+
+    const result = await collections.updateOne(
+      { code },
+      { $set: updateData }
+    );
+
+    if (result.modifiedCount === 0) {
+      return res.status(400).json({ error: "Failed to update discount usage" });
+    }
+
+    res.status(200).json({ 
+      message: "Discount usage tracked successfully",
+      usedCount: updateData.usedCount
+    });
+
+    broadcast({
+      type: "updateDiscount",
+      message: "Update",
+    });
 
   } catch (error) {
     console.error(error);
