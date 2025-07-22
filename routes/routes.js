@@ -1263,7 +1263,7 @@ async function processOfferChunk(updates, offerValue) {
   const allBulkOps = [];
 
   for (const update of updates) {
-    const { time, category, weekday, month, offerType } = update;
+    const { time, category, weekday, month } = update;
     
     // Pre-calculate matching days for all years to build filter criteria
     const matchingDays = [];
@@ -1281,16 +1281,6 @@ async function processOfferChunk(updates, offerValue) {
 
     // Create bulk write operations for this update
     if (matchingDays.length > 0) {
-      // Construct the update object based on offer type
-      let updateFields = {};
-      if (offerType === "percentage") {
-        updateFields.offer = `${offerValue}%`;
-      } else if (offerType === "fixed") {
-        updateFields.offer = `${offerValue}kr`;
-      } else if (offerType === "two_for_one") {
-        updateFields.offer = "2 för 1";
-      }
-
       const bulkOp = {
         updateMany: {
           filter: {
@@ -1304,7 +1294,7 @@ async function processOfferChunk(updates, offerValue) {
             }))
           },
           update: {
-            $set: updateFields
+            $set: { offer: offerValue }
           }
         }
       };
@@ -2132,7 +2122,7 @@ router.patch("/bulk-update-offers", async (req, res) => {
     const allBulkOps = [];
 
     for (const update of updates) {
-      const { time, category, weekday, month, offerType } = update;
+      const { time, category, weekday, month } = update;
       
       // Pre-calculate matching days for all years to build filter criteria
       const matchingDays = [];
@@ -2150,16 +2140,6 @@ router.patch("/bulk-update-offers", async (req, res) => {
 
       // Create bulk write operations for this update
       if (matchingDays.length > 0) {
-        // Construct the update object based on offer type
-        let updateFields = {};
-        if (offerType === "percentage") {
-          updateFields.offer = `${offerValue}%`;
-        } else if (offerType === "fixed") {
-          updateFields.offer = `${offerValue}kr`;
-        } else if (offerType === "two_for_one") {
-          updateFields.offer = "2 för 1";
-        }
-
         const bulkOp = {
           updateMany: {
             filter: {
@@ -2173,7 +2153,7 @@ router.patch("/bulk-update-offers", async (req, res) => {
               }))
             },
             update: {
-              $set: updateFields
+              $set: { offer: offerValue }
             }
           }
         };
