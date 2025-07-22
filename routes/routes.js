@@ -1250,6 +1250,84 @@ router.get("/roomDiscounts", async (req, res) => {
   }
 });
 
+// Process offer updates in chunks to avoid timeouts
+async function processOfferChunk(updates, offerValue) {
+  const collections = db.collection("bookings");
+  const currentYear = new Date().getFullYear();
+  const years = Array.from(
+    { length: 2030 - currentYear + 1 },
+    (_, i) => currentYear + i
+  );
+
+  // Build bulk operations for efficient processing
+  const allBulkOps = [];
+
+  for (const update of updates) {
+    const { time, category, weekday, month, offerType } = update;
+    
+    // Pre-calculate matching days for all years to build filter criteria
+    const matchingDays = [];
+    
+    for (const year of years) {
+      const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
+      
+      for (let day = 1; day <= daysInMonth; day++) {
+        const currentDate = new Date(year, MONTHS.indexOf(month), day);
+        if (currentDate.getDay() === weekday) {
+          matchingDays.push({ year, month, day });
+        }
+      }
+    }
+
+    // Create bulk write operations for this update
+    if (matchingDays.length > 0) {
+      // Construct the update object based on offer type
+      let updateFields = {};
+      if (offerType === "percentage") {
+        updateFields.offer = `${offerValue}%`;
+      } else if (offerType === "fixed") {
+        updateFields.offer = `${offerValue}kr`;
+      } else if (offerType === "two_for_one") {
+        updateFields.offer = "2 för 1";
+      }
+
+      const bulkOp = {
+        updateMany: {
+          filter: {
+            $or: matchingDays.map(({ year, month, day }) => ({
+              year: year,
+              month: month,
+              day: day,
+              category: category,
+              time: time,
+              available: true
+            }))
+          },
+          update: {
+            $set: updateFields
+          }
+        }
+      };
+      allBulkOps.push(bulkOp);
+    }
+  }
+
+  // Execute all bulk operations with optimal batch size
+  let totalModified = 0;
+  const BATCH_SIZE = 20;
+  
+  for (let i = 0; i < allBulkOps.length; i += BATCH_SIZE) {
+    const batch = allBulkOps.slice(i, i + BATCH_SIZE);
+    const bulkResult = await collections.bulkWrite(batch, { 
+      ordered: false,
+      writeConcern: { w: 1, j: false }
+    });
+    totalModified += bulkResult.modifiedCount;
+  }
+
+  return { modifiedCount: totalModified };
+}
+
 // Process discount updates in chunks to avoid timeouts
 async function processDiscountChunk(updates) {
   const collections = db.collection("bookings");
@@ -1966,141 +2044,190 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
 });
 
 router.patch("/bulk-update-offers", async (req, res) => {
-  console.log("=== BULK UPDATE OFFERS ENDPOINT CALLED ===");
-  console.log("Request body:", JSON.stringify(req.body, null, 2));
-  console.log("Request IP:", req.ip);
-  console.log("Request timestamp:", new Date().toISOString());
-
   const { updates, offerValue } = req.body;
 
   if (!updates || !Array.isArray(updates) || !offerValue) {
-    console.log("❌ VALIDATION FAILED:", { updates, offerValue });
     return res.status(400).json({ error: "Updates array and offerValue are required" });
   }
 
-  console.log(`✅ Validation passed: ${updates.length} updates with offer value ${offerValue}`);
-
   try {
+    // For very large operations, process in chunks
+    const estimatedOperations = updates.length * 6 * 4; // rough estimate
+    if (estimatedOperations > 800) {
+      // Process in multiple smaller requests to avoid timeout
+      const chunkSize = Math.ceil(updates.length / 3); // Split into 3 chunks
+      const totalChunks = Math.ceil(updates.length / chunkSize);
+      let completedChunks = 0;
+      let totalProcessed = 0;
+      
+      // Process chunks sequentially to avoid race conditions
+      const processChunksSequentially = async () => {
+        for (let i = 0; i < updates.length; i += chunkSize) {
+          const chunk = updates.slice(i, i + chunkSize);
+          
+          try {
+            // Add delay between chunks to avoid overwhelming the system
+            if (i > 0) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            
+            const result = await processOfferChunk(chunk, offerValue);
+            totalProcessed += result.modifiedCount;
+            completedChunks++;
+            
+            // Broadcast progress
+            broadcast({
+              type: "bulkOfferProgress",
+              data: { 
+                processed: totalProcessed, 
+                total: estimatedOperations,
+                progress: Math.round((completedChunks / totalChunks) * 100),
+                chunk: completedChunks,
+                totalChunks: totalChunks
+              }
+            });
+            
+            // Broadcast completion when all chunks are done
+            if (completedChunks === totalChunks) {
+              broadcast({
+                type: "bulkOfferComplete",
+                data: { 
+                  totalProcessed: totalProcessed,
+                  message: "All offer updates completed successfully"
+                }
+              });
+            }
+          } catch (error) {
+            console.error("Chunk processing error:", error);
+            broadcast({
+              type: "bulkOfferError",
+              data: { 
+                error: error.message,
+                chunk: completedChunks + 1
+              }
+            });
+          }
+        }
+      };
+      
+      // Start processing in background
+      processChunksSequentially().catch(console.error);
+      
+      return res.json({
+        message: "Large offer update started in chunks",
+        estimatedOperations,
+        chunks: totalChunks,
+        status: "processing"
+      });
+    }
+
     const collections = db.collection("bookings");
-    const results = [];
     const currentYear = new Date().getFullYear();
-    console.log(`🔍 Starting offer update process with current year: ${currentYear}`);
-    console.log(`📊 Update summary: ${updates.length} time slots, offer value: ${offerValue} SEK`);
-
-    // Month name to number mapping
-    const monthNameToNumber = {
-      "January": 1, "February": 2, "March": 3, "April": 4, "May": 5, "June": 6,
-      "July": 7, "August": 8, "September": 9, "October": 10, "November": 11, "December": 12
-    };
-
-    // Get all years from current year up to 2030
     const years = Array.from(
       { length: 2030 - currentYear + 1 },
       (_, i) => currentYear + i
     );
-    console.log(`📅 Years to process: ${years.join(", ")}`);
 
-    // Process each update
+    // Build bulk operations for efficient processing
+    const allBulkOps = [];
+
     for (const update of updates) {
-      const { time, category, weekday, month } = update;
-
-      if (!time || !category || weekday === undefined || !month) {
-        console.log(`⚠️ Skipping invalid update:`, JSON.stringify(update));
-        continue;
-      }
-
-      // Convert month name to number if needed
-      let monthNumber = month;
-      if (isNaN(month)) {
-        monthNumber = monthNameToNumber[month];
-        if (!monthNumber) {
-          console.log(`⚠️ Invalid month name: ${month}`);
-          continue;
-        }
-      }
-
-      console.log(`🔄 Processing update for category: "${category}" at time: "${time}" on weekday: ${weekday} in month: ${month} (${monthNumber})`);
-
-      // Find all matching bookings across years
+      const { time, category, weekday, month, offerType } = update;
+      
+      // Pre-calculate matching days for all years to build filter criteria
+      const matchingDays = [];
+      
       for (const year of years) {
-        // Get all days in the specified month that match the weekday
-        const daysInMonth = new Date(year, monthNumber, 0).getDate();
-        const matchingDays = [];
-
+        const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
+        
         for (let day = 1; day <= daysInMonth; day++) {
-          const date = new Date(year, monthNumber - 1, day);
-          // getDay() returns 0 for Sunday, 1 for Monday, etc.
-          if (date.getDay() === weekday) {
-            matchingDays.push(day);
+          const currentDate = new Date(year, MONTHS.indexOf(month), day);
+          if (currentDate.getDay() === weekday) {
+            matchingDays.push({ year, month, day });
           }
         }
+      }
 
-        console.log(`📆 Found ${matchingDays.length} matching days in ${month}/${year} for weekday ${weekday}: [${matchingDays.join(", ")}]`);
-
-        // Update each matching day
-        for (const day of matchingDays) {
-          // Try both formats: numeric month and month name
-          const timeSlotIdNumeric = `${year}-${monthNumber}-${day}-${category.trim()}-${time}`;
-          const timeSlotIdName = `${year}-${month}-${day}-${category.trim()}-${time}`;
-
-          console.log(`🔍 Looking for timeSlot with numeric month: ${timeSlotIdNumeric}`);
-          console.log(`🔍 Looking for timeSlot with month name: ${timeSlotIdName}`);
-
-          // First try with numeric month
-          let updateResult = await collections.updateOne(
-            { timeSlotId: timeSlotIdNumeric },
-            { $set: { offer: offerValue } }
-          );
-
-          // If no match, try with month name
-          if (updateResult.matchedCount === 0) {
-            console.log(`⚠️ No match with numeric month, trying with month name`);
-            updateResult = await collections.updateOne(
-              { timeSlotId: timeSlotIdName },
-              { $set: { offer: offerValue } }
-            );
-          }
-
-          if (updateResult.matchedCount > 0) {
-            const usedTimeSlotId = updateResult.matchedCount > 0 ? timeSlotIdName : timeSlotIdNumeric;
-            results.push({
-              timeSlotId: usedTimeSlotId,
-              success: updateResult.modifiedCount > 0,
-              year,
-              month,
-              day,
-              category,
-              time,
-              offer: offerValue
-            });
-
-            console.log(`✅ Updated timeSlot: ${usedTimeSlotId} with discount: ${offerValue} SEK (modified: ${updateResult.modifiedCount > 0 ? "YES" : "NO"})`);
-          } else {
-            console.log(`❌ No matching booking found for either timeSlot format`);
-          }
+      // Create bulk write operations for this update
+      if (matchingDays.length > 0) {
+        // Construct the update object based on offer type
+        let updateFields = {};
+        if (offerType === "percentage") {
+          updateFields.offer = `${offerValue}%`;
+        } else if (offerType === "fixed") {
+          updateFields.offer = `${offerValue}kr`;
+        } else if (offerType === "two_for_one") {
+          updateFields.offer = "2 för 1";
         }
+
+        const bulkOp = {
+          updateMany: {
+            filter: {
+              $or: matchingDays.map(({ year, month, day }) => ({
+                year: year,
+                month: month,
+                day: day,
+                category: category,
+                time: time,
+                available: true
+              }))
+            },
+            update: {
+              $set: updateFields
+            }
+          }
+        };
+        allBulkOps.push(bulkOp);
       }
     }
 
-    console.log(`📊 Update summary: ${results.length} time slots updated out of ${updates.length} requested`);
+    // Execute all bulk operations with timeout protection
+    let totalModified = 0;
+    const results = [];
+
+    if (allBulkOps.length > 0) {
+      // Larger batch size for better performance, with timeout protection
+      const BATCH_SIZE = 20;
+      const startTime = Date.now();
+      
+      for (let i = 0; i < allBulkOps.length; i += BATCH_SIZE) {
+        // Check if we're approaching the 30-second Heroku timeout
+        if (Date.now() - startTime > 25000) { // 25 seconds safety margin
+          console.warn("Approaching timeout, stopping batch processing");
+          break;
+        }
+        
+        const batch = allBulkOps.slice(i, i + BATCH_SIZE);
+        const bulkResult = await collections.bulkWrite(batch, { 
+          ordered: false,
+          // Add write concern for faster processing
+          writeConcern: { w: 1, j: false }
+        });
+        
+        totalModified += bulkResult.modifiedCount;
+        results.push({
+          batchIndex: Math.floor(i / BATCH_SIZE),
+          modifiedCount: bulkResult.modifiedCount,
+          upsertedCount: bulkResult.upsertedCount
+        });
+      }
+    }
 
     // Broadcast the update via WebSocket
-    console.log(`📡 Broadcasting update to connected clients`);
     broadcast({
       type: "bulkOfferUpdate",
       data: { updates, offerValue }
     });
 
-    console.log(`✅ Bulk offer update completed successfully`);
     res.json({
       message: "Bulk offer update completed",
       results,
-      modifiedCount: results.length
+      totalModified,
+      operationsProcessed: allBulkOps.length
     });
 
   } catch (error) {
-    console.error("❌ ERROR in bulk-update-offers:", error);
-    console.error("Stack trace:", error.stack);
+    console.error("Bulk offer update error:", error);
     res.status(500).json({ error: "Server error while updating offers" });
   }
 });
@@ -3992,27 +4119,86 @@ router.post('/send-confirmation', async (req, res) => {
 });
 
 router.post("/reset-all-offers", async (req, res) => {
-  console.log("=== RESET ALL OFFERS ENDPOINT CALLED ===");
-  console.log("Request timestamp:", new Date().toISOString());
-  console.log("Request IP:", req.ip);
-
   try {
     const collections = db.collection("bookings");
 
-    // Update all bookings to reset the offer field
+    // First, get an estimate of how many documents need to be processed
+    const estimatedCount = await collections.estimatedDocumentCount();
+    
+    // For very large collections, process in batches to avoid timeout
+    if (estimatedCount > 10000) {
+      // Process in background for large operations
+      const processBatchesSequentially = async () => {
+        const BATCH_SIZE = 5000;
+        let totalProcessed = 0;
+        let skip = 0;
+        
+        while (true) {
+          const batch = await collections.find({}).skip(skip).limit(BATCH_SIZE).toArray();
+          if (batch.length === 0) break;
+          
+          // Update this batch
+          const batchIds = batch.map(doc => doc._id);
+          const batchResult = await collections.updateMany(
+            { _id: { $in: batchIds } },
+            { $set: { offer: null } },
+            { writeConcern: { w: 1, j: false } }
+          );
+          
+          totalProcessed += batchResult.modifiedCount;
+          skip += BATCH_SIZE;
+          
+          // Add small delay between batches
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          // Broadcast progress
+          broadcast({
+            type: "offerResetProgress",
+            data: { 
+              processed: totalProcessed,
+              estimated: estimatedCount,
+              progress: Math.round((totalProcessed / estimatedCount) * 100)
+            }
+          });
+        }
+        
+        // Final broadcast when complete
+        broadcast({
+          type: "offersReset",
+          data: {
+            message: "All offers have been reset",
+            totalProcessed: totalProcessed
+          }
+        });
+      };
+      
+      // Start processing in background
+      processBatchesSequentially().catch(console.error);
+      
+      return res.status(200).json({
+        success: true,
+        message: "Large offer reset started in background",
+        estimatedCount,
+        status: "processing"
+      });
+    }
+
+    // For smaller collections, process normally with optimized write concern
     const result = await collections.updateMany(
       {}, // empty filter to match all documents
-      { $set: { offer: null } }
+      { $set: { offer: null } },
+      { writeConcern: { w: 1, j: false } } // Faster write concern
     );
-
-    console.log(`✅ Reset offers for ${result.modifiedCount} bookings out of ${result.matchedCount} total`);
 
     // Broadcast the update via WebSocket to notify all clients
     broadcast({
       type: "offersReset",
-      message: "All offers have been reset"
+      data: {
+        message: "All offers have been reset",
+        matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount
+      }
     });
-    console.log("📡 Broadcast sent to notify clients of offer reset");
 
     res.status(200).json({
       success: true,
@@ -4022,8 +4208,7 @@ router.post("/reset-all-offers", async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ ERROR in reset-all-offers:", error);
-    console.error("Stack trace:", error.stack);
+    console.error("Reset offers error:", error);
     res.status(500).json({
       success: false,
       error: "Server error while resetting offers",
