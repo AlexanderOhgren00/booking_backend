@@ -2138,12 +2138,26 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
                 available: true
               }))
             },
-            update: {
-              $set: {
-                time: newTime,
-                timeSlotId: `${year}-${month}-${day}-${category}-${newTime}`
+            update: [
+              {
+                $set: {
+                  time: newTime,
+                  timeSlotId: {
+                    $concat: [
+                      { $toString: "$year" },
+                      "-",
+                      "$month",
+                      "-", 
+                      { $toString: "$day" },
+                      "-",
+                      "$category",
+                      "-",
+                      newTime
+                    ]
+                  }
+                }
               }
-            }
+            ]
           }
         };
         allBulkOps.push(bulkOp);
