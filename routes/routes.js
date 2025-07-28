@@ -3173,21 +3173,21 @@ router.patch("/bulkChangeTime", async (req, res) => {
 });
 
 router.patch("/singleRoomDiscount", async (req, res) => {
-  const { year, month, category, time, discount } = req.body;
+  const { year, month, day, category, time, discount } = req.body;
 
-  if (!year || !month || !category || !time || discount === undefined) {
+  if (!year || !month || !day || !category || !time || discount === undefined) {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
   try {
     const collections = db.collection("bookings");
-    const results = [];
 
-    // Update all matching time slots
-    const result = await collections.updateMany(
+    // Update only the specific time slot
+    const result = await collections.updateOne(
       {
         year: parseInt(year),
         month: month,
+        day: parseInt(day),
         category: category,
         time: time,
         available: { $in: [true, "locked", "unlocked"] } // Update if available is true, "locked", or "unlocked"
@@ -3202,13 +3202,13 @@ router.patch("/singleRoomDiscount", async (req, res) => {
     // Broadcast the update via WebSocket
     broadcast({
       type: "singleDiscountUpdate",
-      data: { year, month, category, time, discount }
+      data: { year, month, day, category, time, discount }
     });
 
     res.json({
       message: "Single time discount update completed",
       modifiedCount: result.modifiedCount,
-      timeSlotPattern: `${year}-${month}-*-${category}-${time}`
+      timeSlotPattern: `${year}-${month}-${day}-${category}-${time}`
     });
 
   } catch (error) {
