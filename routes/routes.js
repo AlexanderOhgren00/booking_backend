@@ -3005,7 +3005,7 @@ router.patch("/singleRoomDiscount", async (req, res) => {
         month: month,
         category: category,
         time: time,
-        available: true // Only update if available is true
+        available: { $in: [true, "locked", "unlocked"] } // Update if available is true, "locked", or "unlocked"
       },
       {
         $set: {
