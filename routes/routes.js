@@ -716,6 +716,18 @@ router.post("/send-paylink", async (req, res) => {
             await trackBookingCompleted();
           }
 
+          // Broadcast new booking notification
+          if (result.modifiedCount > 0) {
+            broadcast({
+              type: "newBooking",
+              data: {
+                bookingCount: result.modifiedCount,
+                paymentMethod: "Nets Easy",
+                timestamp: swedenTime
+              }
+            });
+          }
+
           // Delete backup entries by timeSlotId for each booking
           try {
             const backupCollection = db.collection("backup");
@@ -3308,6 +3320,18 @@ router.post("/swish/callback", async (req, res) => {
         // Send GA4 tracking for completed booking
         if (result.modifiedCount > 0) {
           await trackBookingCompleted();
+        }
+
+        // Broadcast new booking notification
+        if (result.modifiedCount > 0) {
+          broadcast({
+            type: "newBooking",
+            data: {
+              bookingCount: result.modifiedCount,
+              paymentMethod: "Swish",
+              timestamp: swedenTime
+            }
+          });
         }
 
         // Delete backup entries by timeSlotId for each booking
