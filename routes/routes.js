@@ -111,6 +111,21 @@ async function cleanUpPaymentStates() {
         console.log(`Processing timeSlotId: ${timeSlotId} for reset`);
 
         try {
+          // First, retrieve the current booking to preserve its discount value
+          console.log(`Retrieving current booking for timeSlotId: ${timeSlotId}`);
+          const currentBooking = await collections.findOne({
+            timeSlotId: timeSlotId,
+            available: "occupied"
+          });
+
+          let originalDiscount = 0; // Default discount value
+          if (currentBooking && currentBooking.discount !== undefined) {
+            originalDiscount = currentBooking.discount;
+            console.log(`Found original discount value: ${originalDiscount} for timeSlotId: ${timeSlotId}`);
+          } else {
+            console.log(`No original discount found for timeSlotId: ${timeSlotId}, using default: 0`);
+          }
+
           // Update the booking directly using timeSlotId
           console.log(`Attempting to reset booking with timeSlotId: ${timeSlotId}`);
           console.log(`Query conditions: { timeSlotId: "${timeSlotId}", available: "occupied" }`);
@@ -130,7 +145,7 @@ async function cleanUpPaymentStates() {
                 number: null,
                 email: null,
                 info: null,
-                discount: item.discount,
+                discount: originalDiscount,
                 bookingRef: null,
                 updatedAt: new Date()
               }
@@ -1917,301 +1932,118 @@ async function processDiscardChunk(updates) {
   return { modifiedCount: totalModified };
 }
 
-// Process time change updates in chunks to avoid timeouts
-async function processTimeChangeChunk(updates, minutesToAdd) {
-  const collections = db.collection("bookings");
-  const currentYear = new Date().getFullYear();
-  const years = Array.from(
-    { length: 2030 - currentYear + 1 },
-    (_, i) => currentYear + i
-  );
-
-  // Build bulk operations for efficient processing
-  const allBulkOps = [];
-
-  for (const update of updates) {
-    const { time, category, weekday, month } = update;
-    
-    // Parse the original time and calculate new time
-    const [hours, minutes] = time.split(':').map(Number);
-    const tempDate = new Date(2000, 0, 1, hours, minutes);
-    tempDate.setMinutes(tempDate.getMinutes() + parseInt(minutesToAdd));
-    const newTime = `${String(tempDate.getHours()).padStart(2, '0')}:${String(tempDate.getMinutes()).padStart(2, '0')}`;
-    
-    // Pre-calculate matching days for all years to build filter criteria
-    const matchingDays = [];
-    
-    for (const year of years) {
-      const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
-      
-      for (let day = 1; day <= daysInMonth; day++) {
-        const currentDate = new Date(year, MONTHS.indexOf(month), day);
-        if (currentDate.getDay() === weekday) {
-          matchingDays.push({ year, month, day });
-        }
-      }
-    }
-
-    // Create bulk write operations for this update
-    if (matchingDays.length > 0) {
-      const bulkOp = {
-        updateMany: {
-          filter: {
-            $or: matchingDays.map(({ year, month, day }) => ({
-              year: year,
-              month: month,
-              day: day,
-              category: category,
-              time: time,
-              available: true
-            }))
-          },
-          update: [
-            {
-              $set: {
-                time: newTime,
-                timeSlotId: { 
-                  $concat: [
-                    { $toString: "$year" }, "-", 
-                    "$month", "-", 
-                    { $toString: "$day" }, "-", 
-                    "$category", "-", 
-                    newTime
-                  ]
-                }
-              }
-            }
-          ]
-        }
-      };
-      allBulkOps.push(bulkOp);
-    }
-  }
-
-  // Process with timeout protection
-  let totalModified = 0;
-  const BATCH_SIZE = 20;
-  const startTime = Date.now();
-  
-  for (let i = 0; i < allBulkOps.length; i += BATCH_SIZE) {
-    // Safety check for individual chunk timeout
-    if (Date.now() - startTime > 20000) { // 20 seconds per chunk
-      console.warn("Chunk timeout reached, stopping");
-      break;
-    }
-    
-    const batch = allBulkOps.slice(i, i + BATCH_SIZE);
-    const bulkResult = await collections.bulkWrite(batch, { 
-      ordered: false,
-      writeConcern: { w: 1, j: false }
-    });
-    
-    totalModified += bulkResult.modifiedCount;
-  }
-
-  return { modifiedCount: totalModified };
-}
-
 router.patch("/MonthBulkTimeChange", async (req, res) => {
+  console.log("MonthBulkTimeChange endpoint called with body:", req.body);
   const { updates, minutesToAdd } = req.body;
 
   if (!updates || !Array.isArray(updates) || !minutesToAdd) {
+    console.log("Validation failed:", { updates, minutesToAdd });
     return res.status(400).json({ error: "Updates array and minutesToAdd are required" });
   }
 
   try {
-    // For very large operations, process in chunks
-    const estimatedOperations = updates.length * 6 * 4; // rough estimate
-    if (estimatedOperations > 800) {
-      // Process in multiple smaller requests to avoid timeout
-      const chunkSize = Math.ceil(updates.length / 3); // Split into 3 chunks
-      const totalChunks = Math.ceil(updates.length / chunkSize);
-      let completedChunks = 0;
-      let totalProcessed = 0;
-      
-      // Process chunks sequentially to avoid race conditions
-      const processChunksSequentially = async () => {
-        for (let i = 0; i < updates.length; i += chunkSize) {
-          const chunk = updates.slice(i, i + chunkSize);
-          
-          try {
-            // Add delay between chunks to avoid overwhelming the system
-            if (i > 0) {
-              await new Promise(resolve => setTimeout(resolve, 2000));
-            }
-            
-            const result = await processTimeChangeChunk(chunk, minutesToAdd);
-            totalProcessed += result.modifiedCount;
-            completedChunks++;
-            
-            // Broadcast progress
-            broadcast({
-              type: "bulkTimeChangeProgress",
-              data: { 
-                processed: totalProcessed, 
-                total: estimatedOperations,
-                progress: Math.round((completedChunks / totalChunks) * 100),
-                chunk: completedChunks,
-                totalChunks: totalChunks
-              }
-            });
-            
-            // Broadcast completion when all chunks are done
-            if (completedChunks === totalChunks) {
-              broadcast({
-                type: "bulkTimeChangeComplete",
-                data: { 
-                  totalProcessed: totalProcessed,
-                  message: "All time updates completed successfully"
-                }
-              });
-            }
-          } catch (error) {
-            console.error("Chunk processing error:", error);
-            broadcast({
-              type: "bulkTimeChangeError",
-              data: { 
-                error: error.message,
-                chunk: completedChunks + 1
-              }
-            });
-          }
-        }
-      };
-      
-      // Start processing in background
-      processChunksSequentially().catch(console.error);
-      
-      return res.json({
-        message: "Large time change update started in chunks",
-        estimatedOperations,
-        chunks: totalChunks,
-        status: "processing",
-        modifiedCount: 0  // Frontend compatibility - will be updated via WebSocket
-      });
-    }
-    
     const collections = db.collection("bookings");
+    const results = [];
     const currentYear = new Date().getFullYear();
+    console.log("Starting update process with current year:", currentYear);
+
+    // Get all years from current year up to 2030
     const years = Array.from(
       { length: 2030 - currentYear + 1 },
       (_, i) => currentYear + i
     );
-
-    // Build bulk operations for efficient processing
-    const allBulkOps = [];
+    console.log("Years to process:", years);
 
     for (const update of updates) {
       const { time, category, weekday, month } = update;
-      
-      // Parse the original time and calculate new time
-      const [hours, minutes] = time.split(':').map(Number);
-      const tempDate = new Date(2000, 0, 1, hours, minutes);
-      tempDate.setMinutes(tempDate.getMinutes() + parseInt(minutesToAdd));
-      const newTime = `${String(tempDate.getHours()).padStart(2, '0')}:${String(tempDate.getMinutes()).padStart(2, '0')}`;
-      
-      // Pre-calculate matching days for all years to build filter criteria
-      const matchingDays = [];
-      
+      console.log("Processing update:", { time, category, weekday, month });
+
+      // Update specific month for all years
       for (const year of years) {
+        console.log(`Processing year ${year} for ${month}`);
+        // Get the number of days in this month
         const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
-        
+        console.log(`Days in ${month} ${year}: ${daysInMonth}`);
+
+        // Check each day in the month
         for (let day = 1; day <= daysInMonth; day++) {
+          // Check if this day matches the selected weekday
           const currentDate = new Date(year, MONTHS.indexOf(month), day);
           if (currentDate.getDay() === weekday) {
-            matchingDays.push({ year, month, day });
-          }
-        }
-      }
+            console.log(`Found matching weekday for ${year}-${month}-${day}`);
+            // Parse the original time
+            const [hours, minutes] = time.split(':').map(Number);
+            const originalDate = new Date(year, MONTHS.indexOf(month), day, hours, minutes);
 
-      // Create bulk write operations for this update
-      if (matchingDays.length > 0) {
-        const bulkOp = {
-          updateMany: {
-            filter: {
-              $or: matchingDays.map(({ year, month, day }) => ({
+            // Add the specified minutes
+            originalDate.setMinutes(originalDate.getMinutes() + parseInt(minutesToAdd));
+
+            // Format the new time as HH:mm
+            const newTime = `${String(originalDate.getHours()).padStart(2, '0')}:${String(originalDate.getMinutes()).padStart(2, '0')}`;
+            console.log(`Time conversion: ${time} -> ${newTime} (adding ${minutesToAdd} minutes)`);
+
+            // Log the query we're about to execute
+            console.log("Executing update query with:", {
+              year,
+              month,
+              day,
+              category,
+              time,
+              newTime
+            });
+
+            const result = await collections.updateOne(
+              {
                 year: year,
                 month: month,
                 day: day,
                 category: category,
                 time: time,
-                available: true
-              }))
-            },
-            update: [
+                available: true // Only update if available is true
+              },
               {
                 $set: {
                   time: newTime,
-                  timeSlotId: {
-                    $concat: [
-                      { $toString: "$year" },
-                      "-",
-                      "$month",
-                      "-", 
-                      { $toString: "$day" },
-                      "-",
-                      "$category",
-                      "-",
-                      newTime
-                    ]
-                  }
+                  timeSlotId: `${year}-${month}-${day}-${category}-${newTime}`
                 }
               }
-            ]
+            );
+
+            console.log("Update result:", {
+              matchedCount: result.matchedCount,
+              modifiedCount: result.modifiedCount,
+              timeSlot: `${year}-${month}-${day}-${category}-${time}`
+            });
+
+            if (result.modifiedCount > 0) {
+              results.push({
+                timeSlotId: `${year}-${month}-${day}-${category}-${time}`,
+                newTimeSlotId: `${year}-${month}-${day}-${category}-${newTime}`,
+                success: true
+              });
+            }
           }
-        };
-        allBulkOps.push(bulkOp);
-      }
-    }
-
-    // Execute all bulk operations with timeout protection
-    let totalModified = 0;
-    const results = [];
-
-    if (allBulkOps.length > 0) {
-      // Larger batch size for better performance, with timeout protection
-      const BATCH_SIZE = 20;
-      const startTime = Date.now();
-      
-      for (let i = 0; i < allBulkOps.length; i += BATCH_SIZE) {
-        // Check if we're approaching the 30-second Heroku timeout
-        if (Date.now() - startTime > 25000) { // 25 seconds safety margin
-          console.warn("Approaching timeout, stopping batch processing");
-          break;
         }
-        
-        const batch = allBulkOps.slice(i, i + BATCH_SIZE);
-        const bulkResult = await collections.bulkWrite(batch, { 
-          ordered: false,
-          // Add write concern for faster processing
-          writeConcern: { w: 1, j: false }
-        });
-        
-        totalModified += bulkResult.modifiedCount;
-        results.push({
-          batchIndex: Math.floor(i / BATCH_SIZE),
-          modifiedCount: bulkResult.modifiedCount,
-          upsertedCount: bulkResult.upsertedCount
-        });
       }
     }
+
+    console.log("Final results:", results);
 
     // Broadcast the update via WebSocket
     broadcast({
       type: "bulkTimeUpdate",
       data: { updates, minutesToAdd }
     });
+    console.log("WebSocket broadcast sent");
 
     res.json({
       message: "Bulk time change completed",
       results,
-      modifiedCount: totalModified,  // Frontend compatibility
-      totalModified,
-      operationsProcessed: allBulkOps.length
+      modifiedCount: results.length
     });
 
   } catch (error) {
-    console.error("Bulk time change update error:", error);
+    console.error("Error in MonthBulkTimeChange:", error);
     res.status(500).json({ error: "Server error while updating times" });
   }
 });
