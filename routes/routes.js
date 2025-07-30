@@ -3028,7 +3028,17 @@ router.patch("/checkout", async (req, res) => {
     
     // Only broadcast if the request is from the admin page
     if (isFromAdmin) {
-      broadcast({ type: "timeUpdate", message: "Update" }); // Fire-and-forget
+      const bookingDetails = `${year}-${month}-${day} ${category} ${time}`;
+      broadcast({ 
+        type: "timeUpdate", 
+        title: "bokning ändrad",
+        message: bookingDetails,
+        year,
+        month,
+        day,
+        category,
+        time: time
+      }); // Fire-and-forget
     }
   } catch (error) {
     res.status(500).json({ error: error.message });
