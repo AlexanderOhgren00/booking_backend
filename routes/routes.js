@@ -586,11 +586,11 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     // Create combined booking details for single notification
     const bookingsCount = body.combinedData.length;
     const bookingsList = body.combinedData.map(booking => 
-      `${booking.year}-${booking.month}-${booking.day} ${booking.category} ${booking.time.time}`
+      `${booking.year}-${booking.month}-${booking.day} ${booking.category} ${booking.time}`
     ).join(', ');
     
     const timeSlotIds = body.combinedData.map(booking => 
-      `${booking.year}-${booking.month}-${booking.day}-${booking.category}-${booking.time.time}`
+      `${booking.year}-${booking.month}-${booking.day}-${booking.category}-${booking.time}`
     );
     
     // Single broadcast for all initialized bookings
@@ -604,8 +604,8 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
         month: booking.month,
         day: booking.day,
         category: booking.category,
-        time: booking.time.time,
-        timeSlotId: `${booking.year}-${booking.month}-${booking.day}-${booking.category}-${booking.time.time}`
+        time: booking.time,
+        timeSlotId: `${booking.year}-${booking.month}-${booking.day}-${booking.category}-${booking.time}`
       })),
       timeSlotIds: timeSlotIds,
       paymentId: paymentId
