@@ -582,10 +582,34 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     console.log("Payment states:", paymentStates);
 
     res.status(200).json({ message: "Payment initialized", paymentId, date: currentDate });
-    broadcast({ // Fire-and-forget - don't block payment initialization
-      type: "initialize",
-      message: "Update"
-    });
+    
+    // Create combined booking details for single notification
+    const bookingsCount = body.combinedData.length;
+    const bookingsList = body.combinedData.map(booking => 
+      `${booking.year}-${booking.month}-${booking.day} ${booking.category} ${booking.time.time}`
+    ).join(', ');
+    
+    const timeSlotIds = body.combinedData.map(booking => 
+      `${booking.year}-${booking.month}-${booking.day}-${booking.category}-${booking.time.time}`
+    );
+    
+    // Single broadcast for all initialized bookings
+    broadcast({ 
+      type: "bookingInitialized", 
+      title: "Boking påbörjad",
+      message: `${bookingsCount} bokning${bookingsCount > 1 ? 'ar' : ''}: ${bookingsList}`,
+      bookingsCount: bookingsCount,
+      bookings: body.combinedData.map(booking => ({
+        year: booking.year,
+        month: booking.month,
+        day: booking.day,
+        category: booking.category,
+        time: booking.time.time,
+        timeSlotId: `${booking.year}-${booking.month}-${booking.day}-${booking.category}-${booking.time.time}`
+      })),
+      timeSlotIds: timeSlotIds,
+      paymentId: paymentId
+    }); // Fire-and-forget - don't block payment initialization
 
   } catch (error) {
     console.error(error);
@@ -3672,12 +3696,6 @@ router.post("/swish/callback", async (req, res) => {
         } catch (discountError) {
           console.error(`❌ Error cleaning up discount for failed payment ${paymentId}:`, discountError);
         }
-
-        // Broadcast update to clients (non-blocking)
-        broadcast({
-          type: "timeUpdate",
-          message: "Failed payment slots reset"
-        });
 
       } catch (cleanupError) {
         console.error('Error cleaning up failed Swish payment:', cleanupError);
