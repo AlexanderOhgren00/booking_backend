@@ -3311,6 +3311,20 @@ router.get("/bookings/:year/:month/:day", async (req, res) => {
   }
 });
 
+// Get a single booking by timeSlotId
+router.get("/booking/:timeSlotId", async (req, res) => {
+  const { timeSlotId } = req.params;
+  try {
+    const booking = await db.collection("bookings").findOne({ timeSlotId: timeSlotId });
+    if (!booking) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+    res.json(booking);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post("/swish/callback", async (req, res) => {
   try {
     const {
