@@ -585,9 +585,15 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     
     // Create combined booking details for single notification
     const bookingsCount = body.combinedData.length;
-    const bookingsList = body.combinedData.map(booking => 
-      `${booking.year}-${booking.month}-${booking.day} ${booking.category} ${booking.time}`
-    ).join(', ');
+    
+    // Different message format based on count
+    let message;
+    if (bookingsCount === 1) {
+      const booking = body.combinedData[0];
+      message = `${booking.year}-${booking.month}-${booking.day} ${booking.category} ${booking.time}`;
+    } else {
+      message = `${bookingsCount} bokningar`;
+    }
     
     const timeSlotIds = body.combinedData.map(booking => 
       `${booking.year}-${booking.month}-${booking.day}-${booking.category}-${booking.time}`
@@ -597,7 +603,7 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     broadcast({ 
       type: "bookingInitialized", 
       title: "Boking påbörjad",
-      message: `${bookingsCount} bokning${bookingsCount > 1 ? 'ar' : ''}: ${bookingsList}`,
+      message: message,
       bookingsCount: bookingsCount,
       bookings: body.combinedData.map(booking => ({
         year: booking.year,
@@ -764,14 +770,34 @@ router.post("/send-paylink", async (req, res) => {
           }
 
           // Broadcast new booking notification (non-blocking)
-          if (result.modifiedCount > 0) {
+          if (result.modifiedCount > 0 && bookings.length > 0) {
+            const bookingsCount = bookings.length;
+            
+            // Different message format based on count
+            let message;
+            if (bookingsCount === 1) {
+              const booking = bookings[0];
+              message = `${booking.year}-${booking.month}-${booking.day} ${booking.category} ${booking.time}`;
+            } else {
+              message = `${bookingsCount} bokningar`;
+            }
+            
             broadcast({
-              type: "newBooking",
-              data: {
-                bookingCount: result.modifiedCount,
-                paymentMethod: "Nets Easy",
-                timestamp: swedenTime
-              }
+              type: "bookingInitialized", 
+              title: "Bokning slutförd",
+              message: message,
+              bookingsCount: bookingsCount,
+              bookings: bookings.map(booking => ({
+                year: booking.year,
+                month: booking.month,
+                day: booking.day,
+                category: booking.category,
+                time: booking.time,
+                timeSlotId: booking.timeSlotId
+              })),
+              timeSlotIds: bookings.map(booking => booking.timeSlotId),
+              paymentId: paymentId,
+              paymentMethod: "Nets Easy"
             });
           }
 
@@ -3400,14 +3426,34 @@ router.post("/swish/callback", async (req, res) => {
         }
 
         // Broadcast new booking notification (non-blocking)
-        if (result.modifiedCount > 0) {
+        if (result.modifiedCount > 0 && bookings.length > 0) {
+          const bookingsCount = bookings.length;
+          
+          // Different message format based on count
+          let message;
+          if (bookingsCount === 1) {
+            const booking = bookings[0];
+            message = `${booking.year}-${booking.month}-${booking.day} ${booking.category} ${booking.time}`;
+          } else {
+            message = `${bookingsCount} bokningar`;
+          }
+          
           broadcast({
-            type: "newBooking",
-            data: {
-              bookingCount: result.modifiedCount,
-              paymentMethod: "Swish",
-              timestamp: swedenTime
-            }
+            type: "bookingInitialized", 
+            title: "Bokning slutförd",
+            message: message,
+            bookingsCount: bookingsCount,
+            bookings: bookings.map(booking => ({
+              year: booking.year,
+              month: booking.month,
+              day: booking.day,
+              category: booking.category,
+              time: booking.time,
+              timeSlotId: booking.timeSlotId
+            })),
+            timeSlotIds: bookings.map(booking => booking.timeSlotId),
+            paymentId: paymentId,
+            paymentMethod: "Swish"
           });
         }
 
