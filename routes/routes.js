@@ -3017,13 +3017,19 @@ router.get("/years", haltOnTimedout, async (req, res) => {
 
 router.patch("/checkout", async (req, res) => {
   const { year, month, day, category, time, ...updateData } = req.body;
+  const isFromAdmin = req.query.fromAdmin === 'true' || req.headers['x-from-admin'] === 'true';
+  
   try {
     const result = await db.collection("bookings").updateOne(
       { timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}` },
       { $set: { ...updateData, updatedAt: new Date() } }
     );
     res.json(result);
-    broadcast({ type: "timeUpdate", message: "Update" }); // Fire-and-forget
+    
+    // Only broadcast if the request is from the admin page
+    if (isFromAdmin) {
+      broadcast({ type: "timeUpdate", message: "Update" }); // Fire-and-forget
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
