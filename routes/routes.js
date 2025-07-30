@@ -4,7 +4,7 @@ import db from "../db/connections.js";
 import rateLimit from 'express-rate-limit';
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { wss } from "../checkout.js";
+import { wss, WebSocket } from "../checkout.js";
 import fs from 'fs';
 import https from 'https';
 import { fileURLToPath } from 'url';
@@ -81,12 +81,35 @@ function haltOnTimedout(req, res, next) {
   if (!req.timedout) next()
 }
 
-function broadcast(data) {
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
-    }
-  });
+async function broadcast(data) {
+  // Immediate WebSocket broadcast - never block critical flows
+  try {
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify(data));
+      }
+    });
+  } catch (error) {
+    console.error("Failed to broadcast notification to WebSocket clients:", error);
+  }
+  
+  // Database save in background - don't await this in critical flows
+  if (data.type && data.type !== 'progress') {
+    setImmediate(async () => {
+      try {
+        const notificationCollection = db.collection("notifications");
+        const notification = {
+          ...data,
+          timestamp: new Date(),
+          readBy: [] // Empty array - no one has read it yet
+        };
+        await notificationCollection.insertOne(notification);
+      } catch (error) {
+        console.error("Failed to save notification to database:", error);
+        // Database failure doesn't affect real-time notifications
+      }
+    });
+  }
 }
 
 async function cleanUpPaymentStates() {
@@ -202,7 +225,7 @@ async function cleanUpPaymentStates() {
       console.log(`Current paymentStates after removal:`, Object.keys(paymentStates).length > 0 ? Object.keys(paymentStates) : "No payment states");
 
       // Broadcast update to all clients
-      broadcast({
+      await broadcast({
         type: "timeUpdate",
         message: "Expired payment slots reset"
       });
@@ -559,7 +582,7 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     console.log("Payment states:", paymentStates);
 
     res.status(200).json({ message: "Payment initialized", paymentId, date: currentDate });
-    broadcast({
+    broadcast({ // Fire-and-forget - don't block payment initialization
       type: "initialize",
       message: "Update"
     });
@@ -716,7 +739,7 @@ router.post("/send-paylink", async (req, res) => {
             await trackBookingCompleted();
           }
 
-          // Broadcast new booking notification
+          // Broadcast new booking notification (non-blocking)
           if (result.modifiedCount > 0) {
             broadcast({
               type: "newBooking",
@@ -1165,7 +1188,7 @@ router.post("/register", async (req, res) => {
     await db.collection("users").insertOne({ username, passwordHash, privilage });
 
     res.status(201).json({ message: "User created" });
-    broadcast({
+    await broadcast({
       type: "updateUsers",
       message: "Update",
     });
@@ -1196,7 +1219,7 @@ router.delete("/users", async (req, res) => {
 
     if (result.deletedCount === 1) {
       // Broadcast user deletion
-      broadcast({
+      await broadcast({
         type: "updateUsers",
         message: "Update",
       });
@@ -1255,7 +1278,7 @@ router.patch("/users", async (req, res) => {
     );
 
     res.json(result);
-    broadcast({
+    await broadcast({
       type: "updateUsers",
       message: "Update",
     });
@@ -1482,14 +1505,14 @@ async function processDiscountUpdatesInBackground(updates) {
     console.log(`Background discount processing completed. Total modified: ${totalModified}`);
     
     // Broadcast completion
-    broadcast({
+    await broadcast({
       type: "bulkDiscountUpdateComplete",
       data: { totalModified, updates }
     });
 
   } catch (error) {
     console.error("Background processing error:", error);
-    broadcast({
+    await broadcast({
       type: "bulkDiscountUpdateError",
       data: { error: error.message }
     });
@@ -1546,7 +1569,7 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
             completedChunks++;
             
             // Broadcast progress
-            broadcast({
+            await broadcast({
               type: "bulkDiscountProgress",
               data: { 
                 processed: totalProcessed, 
@@ -1559,7 +1582,7 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
             
             // Broadcast completion when all chunks are done
             if (completedChunks === totalChunks) {
-              broadcast({
+              await broadcast({
                 type: "bulkDiscountComplete",
                 data: { 
                   totalProcessed: totalProcessed,
@@ -1569,7 +1592,7 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
             }
           } catch (error) {
             console.error("Chunk processing error:", error);
-            broadcast({
+            await broadcast({
               type: "bulkDiscountError",
               data: { 
                 error: error.message,
@@ -1673,7 +1696,7 @@ router.patch("/bulkRoomDiscount", async (req, res) => {
     }
 
     // Broadcast the update via WebSocket
-    broadcast({
+    await broadcast({
       type: "bulkDiscountUpdate",
       data: { updates }
     });
@@ -1724,7 +1747,7 @@ router.patch("/bulkDiscardDiscount", async (req, res) => {
             completedChunks++;
             
             // Broadcast progress
-            broadcast({
+            await broadcast({
               type: "bulkDiscardProgress",
               data: { 
                 processed: totalProcessed, 
@@ -1737,7 +1760,7 @@ router.patch("/bulkDiscardDiscount", async (req, res) => {
             
             // Broadcast completion when all chunks are done
             if (completedChunks === totalChunks) {
-              broadcast({
+              await broadcast({
                 type: "bulkDiscardComplete",
                 data: { 
                   totalProcessed: totalProcessed,
@@ -1747,7 +1770,7 @@ router.patch("/bulkDiscardDiscount", async (req, res) => {
             }
           } catch (error) {
             console.error("Chunk processing error:", error);
-            broadcast({
+            await broadcast({
               type: "bulkDiscardError",
               data: { 
                 error: error.message,
@@ -1851,7 +1874,7 @@ router.patch("/bulkDiscardDiscount", async (req, res) => {
     }
 
     // Broadcast the update via WebSocket
-    broadcast({
+    await broadcast({
       type: "bulkDiscardUpdate",
       data: { updates }
     });
@@ -1936,7 +1959,7 @@ async function processDiscardChunk(updates) {
   console.log(`Background discard processing completed. Total modified: ${totalModified}`);
   
   // Broadcast completion
-  broadcast({
+  await broadcast({
     type: "bulkDiscardUpdateComplete",
     data: { totalModified, updates }
   });
@@ -2072,7 +2095,7 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
             completedChunks++;
             
             // Broadcast progress
-            broadcast({
+            await broadcast({
               type: "bulkTimeChangeProgress",
               data: { 
                 processed: totalProcessed, 
@@ -2085,7 +2108,7 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
             
             // Broadcast completion when all chunks are done
             if (completedChunks === totalChunks) {
-              broadcast({
+              await broadcast({
                 type: "bulkTimeChangeComplete",
                 data: { 
                   totalProcessed: totalProcessed,
@@ -2095,7 +2118,7 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
             }
           } catch (error) {
             console.error("Chunk processing error:", error);
-            broadcast({
+            await broadcast({
               type: "bulkTimeChangeError",
               data: { 
                 error: error.message,
@@ -2224,7 +2247,7 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
     }
 
     // Broadcast the update via WebSocket
-    broadcast({
+    await broadcast({
       type: "bulkTimeUpdate",
       data: { updates, minutesToAdd }
     });
@@ -2276,7 +2299,7 @@ router.patch("/bulk-update-offers", async (req, res) => {
             completedChunks++;
             
             // Broadcast progress
-            broadcast({
+            await broadcast({
               type: "bulkOfferProgress",
               data: { 
                 processed: totalProcessed, 
@@ -2289,7 +2312,7 @@ router.patch("/bulk-update-offers", async (req, res) => {
             
             // Broadcast completion when all chunks are done
             if (completedChunks === totalChunks) {
-              broadcast({
+              await broadcast({
                 type: "bulkOfferComplete",
                 data: { 
                   totalProcessed: totalProcessed,
@@ -2299,7 +2322,7 @@ router.patch("/bulk-update-offers", async (req, res) => {
             }
           } catch (error) {
             console.error("Chunk processing error:", error);
-            broadcast({
+            await broadcast({
               type: "bulkOfferError",
               data: { 
                 error: error.message,
@@ -2404,7 +2427,7 @@ router.patch("/bulk-update-offers", async (req, res) => {
     }
 
     // Broadcast the update via WebSocket
-    broadcast({
+    await broadcast({
       type: "bulkOfferUpdate",
       data: { updates, offerValue }
     });
@@ -2472,7 +2495,7 @@ router.delete("/deleteRoomDiscount", async (req, res) => {
           totalBookingsToUpdate: affectedCount
         });
 
-        broadcast({
+        await broadcast({
           type: "updateRoomDiscounts",
           message: "Update",
         });
@@ -2523,7 +2546,7 @@ router.delete("/deleteRoomDiscount", async (req, res) => {
       bookingsUpdated: PersonCost ? totalUpdated : 0 
     });
 
-    broadcast({
+    await broadcast({
       type: "updateRoomDiscounts",
       message: "Update",
     });
@@ -2572,7 +2595,7 @@ async function processDiscountDeletionInBackground(PersonCost, totalCount) {
     console.log(`Background discount deletion completed. Updated ${processedCount} bookings.`);
     
     // Broadcast completion
-    broadcast({
+    await broadcast({
       type: "discountDeletionComplete",
       data: { 
         PersonCost, 
@@ -2583,7 +2606,7 @@ async function processDiscountDeletionInBackground(PersonCost, totalCount) {
 
   } catch (error) {
     console.error("Background processing error:", error);
-    broadcast({
+    await broadcast({
       type: "discountDeletionError",
       data: { 
         PersonCost, 
@@ -2641,7 +2664,7 @@ router.post("/roomDiscounts", async (req, res) => {
 
     res.status(201).json({ message: "Discount created" });
 
-    broadcast({
+    await broadcast({
       type: "updateRoomDiscounts",
       message: "Update",
     });
@@ -2674,7 +2697,7 @@ router.patch("/updateRoomDiscountColor", async (req, res) => {
     res.status(200).json({ message: "Discount color updated successfully" });
 
     // Broadcast the update to all connected clients
-    broadcast({
+    await broadcast({
       type: "updateRoomDiscounts",
       message: "Update",
     });
@@ -2714,7 +2737,7 @@ router.delete("/deleteDiscount", async (req, res) => {
 
     res.status(200).json({ message: "Discount deleted" });
 
-    broadcast({
+    await broadcast({
       type: "updateDiscount",
       message: "Update",
     })
@@ -2782,7 +2805,7 @@ router.post("/createDiscount", async (req, res) => {
 
     res.status(201).json({ message: "Discount created successfully" });
 
-    broadcast({
+    await broadcast({
       type: "updateDiscount",
       message: "Update",
     });
@@ -2969,7 +2992,7 @@ router.patch("/useDiscount/:code", async (req, res) => {
       usedCount: updateData.usedCount
     });
 
-    broadcast({
+    await broadcast({
       type: "updateDiscount",
       message: "Update",
     });
@@ -3000,7 +3023,7 @@ router.patch("/checkout", async (req, res) => {
       { $set: { ...updateData, updatedAt: new Date() } }
     );
     res.json(result);
-    broadcast({ type: "timeUpdate", message: "Update" });
+    broadcast({ type: "timeUpdate", message: "Update" }); // Fire-and-forget
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -3021,14 +3044,14 @@ router.delete("/checkout", async (req, res) => {
       return res.status(404).json({ error: "Booking not found" });
     }
 
-    // Broadcast the update to all connected clients
-    broadcast({ type: "timeUpdate", message: "Update" });
-
     res.json({
       message: "Booking deleted successfully",
       timeSlotId: timeSlotId,
       result
     });
+    
+    // Broadcast the update to all connected clients (fire-and-forget)
+    broadcast({ type: "timeUpdate", message: "Update" });
 
   } catch (error) {
     console.error("Error deleting booking:", error);
@@ -3076,7 +3099,7 @@ router.patch("/changeTime", async (req, res) => {
     }
 
     // Broadcast update via WebSocket
-    broadcast({
+    await broadcast({
       type: "timeUpdate",
       data: { year, month, day, category, oldTime, newTime }
     });
@@ -3155,7 +3178,7 @@ router.patch("/bulkChangeTime", async (req, res) => {
     }
 
     // Broadcast updates via WebSocket
-    broadcast({
+    await broadcast({
       type: "bulkTimeUpdate",
       data: updates
     });
@@ -3200,7 +3223,7 @@ router.patch("/singleRoomDiscount", async (req, res) => {
     );
 
     // Broadcast the update via WebSocket
-    broadcast({
+    await broadcast({
       type: "singleDiscountUpdate",
       data: { year, month, day, category, time, discount }
     });
@@ -3322,7 +3345,7 @@ router.post("/swish/callback", async (req, res) => {
           await trackBookingCompleted();
         }
 
-        // Broadcast new booking notification
+        // Broadcast new booking notification (non-blocking)
         if (result.modifiedCount > 0) {
           broadcast({
             type: "newBooking",
@@ -3620,7 +3643,7 @@ router.post("/swish/callback", async (req, res) => {
           console.error(`❌ Error cleaning up discount for failed payment ${paymentId}:`, discountError);
         }
 
-        // Broadcast update to clients
+        // Broadcast update to clients (non-blocking)
         broadcast({
           type: "timeUpdate",
           message: "Failed payment slots reset"
@@ -4354,7 +4377,7 @@ router.post("/reset-all-offers", async (req, res) => {
           await new Promise(resolve => setTimeout(resolve, 100));
           
           // Broadcast progress
-          broadcast({
+          await broadcast({
             type: "offerResetProgress",
             data: { 
               processed: totalProcessed,
@@ -4365,7 +4388,7 @@ router.post("/reset-all-offers", async (req, res) => {
         }
         
         // Final broadcast when complete
-        broadcast({
+        await broadcast({
           type: "offersReset",
           data: {
             message: "All offers have been reset",
@@ -4393,7 +4416,7 @@ router.post("/reset-all-offers", async (req, res) => {
     );
 
     // Broadcast the update via WebSocket to notify all clients
-    broadcast({
+    await broadcast({
       type: "offersReset",
       data: {
         message: "All offers have been reset",
@@ -4699,7 +4722,7 @@ router.post("/v1/giftcard-payments/:paymentId/initialize", async (req, res) => {
       date: currentDate 
     });
 
-    broadcast({
+    await broadcast({
       type: "giftcard_initialize",
       message: "Gift card payment initialized"
     });
@@ -5259,6 +5282,127 @@ router.patch("/giftcard/update/:reference", async (req, res) => {
 
   } catch (error) {
     console.error("Error updating gift card:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== NOTIFICATION ROUTES =====
+
+// Get notifications for specific user
+router.get('/notifications/:username', authenticateToken, async (req, res) => {
+  try {
+    const { username } = req.params;
+    const notificationCollection = db.collection("notifications");
+    
+    // Get all notifications and calculate read status for this user
+    const notifications = await notificationCollection
+      .find({})
+      .sort({ timestamp: -1 })
+      .limit(100)
+      .toArray();
+    
+    // Add user-specific read status
+    const userNotifications = notifications.map(notification => {
+      const userRead = notification.readBy?.find(read => read.username === username);
+      return {
+        ...notification,
+        isRead: !!userRead,
+        readAt: userRead?.readAt || null,
+        isDismissed: userRead?.dismissed || false
+      };
+    });
+    
+    res.json(userNotifications);
+  } catch (error) {
+    console.error("Error fetching user notifications:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Mark notification as read for specific user
+router.patch('/notifications/:id/read', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { username } = req.body;
+    const notificationCollection = db.collection("notifications");
+    
+    // Check if user already marked it as read
+    const notification = await notificationCollection.findOne({ _id: new ObjectId(id) });
+    if (!notification) {
+      return res.status(404).json({ error: "Notification not found" });
+    }
+    
+    const alreadyRead = notification.readBy?.some(read => read.username === username);
+    
+    if (!alreadyRead) {
+      await notificationCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { 
+          $push: { 
+            readBy: {
+              username,
+              readAt: new Date(),
+              dismissed: false
+            }
+          }
+        }
+      );
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error marking notification as read:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Mark all notifications as read for user
+router.patch('/notifications/markall/read', authenticateToken, async (req, res) => {
+  try {
+    const { username } = req.body;
+    const notificationCollection = db.collection("notifications");
+    
+    // Find all notifications not read by this user
+    const unreadNotifications = await notificationCollection.find({
+      'readBy.username': { $ne: username }
+    }).toArray();
+    
+    // Mark them all as read
+    for (const notification of unreadNotifications) {
+      await notificationCollection.updateOne(
+        { _id: notification._id },
+        { 
+          $push: { 
+            readBy: {
+              username,
+              readAt: new Date(),
+              dismissed: false
+            }
+          }
+        }
+      );
+    }
+    
+    res.json({ success: true, markedCount: unreadNotifications.length });
+  } catch (error) {
+    console.error("Error marking all notifications as read:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get unread count for user
+router.get('/notifications/:username/unread-count', authenticateToken, async (req, res) => {
+  try {
+    const { username } = req.params;
+    const notificationCollection = db.collection("notifications");
+    
+    const unreadCount = await notificationCollection.countDocuments({
+      'readBy.username': { $ne: username }
+    });
+    
+    res.json({ unreadCount });
+  } catch (error) {
+    console.error("Error fetching unread count:", error);
     res.status(500).json({ error: error.message });
   }
 });

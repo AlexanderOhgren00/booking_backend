@@ -12,6 +12,7 @@ const sslRedirect = herokuSSLRedirect.default;
 const app = express();
 const server = http.createServer(app);
 export const wss = new WebSocketServer({ server });
+export { WebSocket };
 
 // Track connections per IP to prevent abuse
 const connectionsByIP = new Map();
