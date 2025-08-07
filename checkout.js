@@ -108,13 +108,24 @@ wss.on("connection", (ws, req) => {
   // Send a welcome message
   ws.send(JSON.stringify({ message: "Connected to WebSocket server" }));
 
-  // Set connection timeout (close after 10 minutes of inactivity instead of 1 hour)
-  const connectionTimeout = setTimeout(() => {
+  // Set connection timeout (close after 10 minutes of inactivity)
+  let connectionTimeout = setTimeout(() => {
       if (ws.readyState === WebSocket.OPEN) {
           console.log("Closing idle WebSocket connection");
           ws.close(1000, "Connection timeout");
       }
-  }, 10 * 60 * 1000); // 10 minutes instead of 1 hour
+  }, 10 * 60 * 1000); // 10 minutes
+
+  // Function to reset the timeout on activity
+  const resetTimeout = () => {
+    clearTimeout(connectionTimeout);
+    connectionTimeout = setTimeout(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        console.log("Closing idle WebSocket connection");
+        ws.close(1000, "Connection timeout");
+      }
+    }, 10 * 60 * 1000); // Reset to 10 minutes
+  };
 
   // Keep connection alive with ping/pong (reduced to 20 seconds)
   const keepAliveInterval = setInterval(() => {
@@ -128,12 +139,28 @@ wss.on("connection", (ws, req) => {
 
   // Handle messages from clients
   ws.on("message", (message) => {
+    // Reset timeout on any message activity
+    resetTimeout();
+    
     // Handle incoming messages here if needed
+    try {
+      const parsedMessage = JSON.parse(message);
+      if (parsedMessage.type === "ping") {
+        // Respond to client ping with pong
+        ws.send(JSON.stringify({ type: "pong" }));
+      } else if (parsedMessage.type === "pong") {
+        // Client responded to our ping - connection is alive
+        // Timeout already reset by the resetTimeout() call above
+      }
+    } catch (error) {
+      // Ignore non-JSON messages
+    }
   });
   
   // Handle pong responses
   ws.on("pong", () => {
-    // Connection is alive
+    // Connection is alive - reset timeout
+    resetTimeout();
   });
   
   // Handle errors
@@ -145,7 +172,7 @@ wss.on("connection", (ws, req) => {
 
   // Handle disconnection - SINGLE handler only
   ws.on("close", (code, reason) => {
-      console.log(`Client disconnected: ${code} ${reason}`);
+      console.log(`Client disconnected from ${clientIP}: ${code} ${reason}`);
       clearInterval(keepAliveInterval);
       clearTimeout(connectionTimeout);
       
