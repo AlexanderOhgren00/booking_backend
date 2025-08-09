@@ -3797,10 +3797,13 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       message: message
     };
 
-    // Always add payerAlias if it exists and is a string
-    if (payerAlias && typeof payerAlias === 'string') {
+    // Only add payerAlias for E-Commerce (desktop) payments
+    // For M-Commerce (mobile), omit payerAlias to get PaymentRequestToken header
+    if (!isMobile && payerAlias && typeof payerAlias === 'string') {
       paymentData.payerAlias = payerAlias.startsWith('0') ? '46' + payerAlias.slice(1) : payerAlias;
-      console.log('Added payerAlias:', paymentData.payerAlias);
+      console.log('Added payerAlias for E-Commerce:', paymentData.payerAlias);
+    } else if (isMobile) {
+      console.log('Omitting payerAlias for M-Commerce to enable deep linking');
     }
 
     console.log('Initial payment data:', paymentData);
@@ -3887,17 +3890,22 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       }
     }
 
-    // For mobile payments or if status fetch fails
+    // For mobile payments, use PaymentRequestToken header; for desktop, use location header
+    const tokenValue = isMobile ? 
+      (response.headers.paymentrequesttoken || response.headers.PaymentRequestToken) : 
+      response.headers.location;
+
     console.log('Sending final response:', {
       status: response.status,
-      paymentRequestToken: response.headers.location,
+      paymentRequestToken: tokenValue,
       instructionUUID,
-      paymentType: isMobile ? 'mobile' : 'qr'
+      paymentType: isMobile ? 'mobile' : 'qr',
+      headers: response.headers // Debug: log all headers
     });
 
     res.status(response.status).json({
       status: response.status,
-      paymentRequestToken: response.headers.location,
+      paymentRequestToken: tokenValue,
       instructionUUID,
       paymentType: isMobile ? 'mobile' : 'qr'
     });
