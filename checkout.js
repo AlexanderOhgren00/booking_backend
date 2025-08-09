@@ -16,7 +16,7 @@ export { WebSocket };
 
 // Track connections per IP to prevent abuse
 const connectionsByIP = new Map();
-const MAX_CONNECTIONS_PER_IP = 10;
+const MAX_CONNECTIONS_PER_IP = 50;
 
 // Track blocked IPs with timestamp
 const blockedIPs = new Map(); // IP -> blockedUntil timestamp
