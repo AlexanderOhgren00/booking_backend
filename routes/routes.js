@@ -312,7 +312,7 @@ router.get("/getRecentBookings", async (req, res) => {
 
     // Create query conditions based on lastDate
     const queryCondition = { available: false };
-    const backupQueryCondition = {};
+    const backupQueryCondition = { available: "occupied" };
 
     if (lastDate) {
       console.log(`Fetching bookings before date: ${lastDate}`);
@@ -358,8 +358,13 @@ router.get("/getRecentBookings", async (req, res) => {
       console.log("All backup dates:", recentBackups.map(b => b.backupCreatedAt));
     }
 
-    // Merge both arrays and sort by date
-    const allRecentBookings = [...recentBookings, ...recentBackups]
+    // Merge both arrays and remove duplicates based on _id
+    const merged = [...recentBookings, ...recentBackups];
+    const uniqueBookings = merged.filter((booking, index, self) => 
+      index === self.findIndex(b => b._id.toString() === booking._id.toString())
+    );
+    
+    const allRecentBookings = uniqueBookings
       .sort((a, b) => {
         // Handle case when date might be missing
         const timeA = a.bookedAt || a.backupCreatedAt ? new Date(a.bookedAt || a.backupCreatedAt).getTime() : 0;
