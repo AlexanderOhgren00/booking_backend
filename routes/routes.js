@@ -3079,6 +3079,30 @@ router.patch("/checkout", async (req, res) => {
       { timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}` },
       { $set: { ...updateData, updatedAt: new Date() } }
     );
+    
+    // If this is a cancellation (available: true) from admin, update cancelled slot with discount from other same time slots
+    if (isFromAdmin && updateData.available === true) {
+      // Find other categories with the same time slot on the same day
+      const sameTimeSlots = await db.collection("bookings").find({
+        year: year,
+        month: month,
+        day: day,
+        time: time,
+        category: { $ne: category.trim() } // Exclude the cancelled booking's category
+      }).toArray();
+      
+      // Find a discount value from the other time slots (take the first non-zero discount found)
+      const discountToApply = sameTimeSlots.find(slot => slot.discount && slot.discount !== 0)?.discount;
+      
+      if (discountToApply) {
+        // Update the cancelled booking with the discount from other time slots
+        await db.collection("bookings").updateOne(
+          { timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}` },
+          { $set: { discount: discountToApply } }
+        );
+      }
+    }
+    
     res.json(result);
     
     // Only broadcast if the request is from the admin page
