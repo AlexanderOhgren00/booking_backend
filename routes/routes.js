@@ -3080,8 +3080,8 @@ router.patch("/checkout", async (req, res) => {
       { $set: { ...updateData, updatedAt: new Date() } }
     );
     
-    // If this is a cancellation (available: true) from admin, update cancelled slot with discount from other same time slots
-    if (isFromAdmin && updateData.available === true) {
+    // If this is a cancellation (available: true) from admin with action=cancel, update cancelled slot with discount from other same time slots
+    if (isFromAdmin && req.query.action === 'cancel' && updateData.available === true) {
       // Find other categories with the same time slot on the same day
       const sameTimeSlots = await db.collection("bookings").find({
         year: year,
