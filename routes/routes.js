@@ -315,9 +315,9 @@ router.get("/getRecentBookings", async (req, res) => {
     const backupQueryCondition = { available: "occupied" };
 
     if (lastDate) {
-      console.log(`Fetching bookings before date: ${lastDate}`);
-      queryCondition.bookedAt = { $lt: lastDate };
-      backupQueryCondition.backupCreatedAt = { $lt: lastDate };
+      console.log(`Fetching bookings before or equal to date: ${lastDate}`);
+      queryCondition.bookedAt = { $lte: lastDate };
+      backupQueryCondition.backupCreatedAt = { $lte: lastDate };
     }
 
     // Get recent bookings from the bookings collection
