@@ -428,7 +428,7 @@ router.post("/addbackup", async (req, res) => {
     backupData,
     backupCreatedAt: swedenTime,
     backupSource: "canceled",
-    paymentId: backupData.paymentId
+    paymentId: backupData?.paymentId || null
   });
   res.json({ message: "Backup added", result });
 });
