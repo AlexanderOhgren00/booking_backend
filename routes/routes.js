@@ -409,7 +409,7 @@ router.post("/v1/payments", async (req, res) => {
   }
 });
 
-router.post("addbackup", async (req, res) => {
+router.post("/addbackup", async (req, res) => {
   const { backupData } = req.body;
   const collections = db.collection("backup");
 
