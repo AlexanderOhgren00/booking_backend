@@ -425,7 +425,7 @@ router.post("/addbackup", async (req, res) => {
   }).format(currentTime);
 
   const result = await collections.insertOne({
-    backupData,
+    ...backupData,
     backupCreatedAt: swedenTime,
     backupSource: "canceled",
     paymentId: backupData?.paymentId || null
