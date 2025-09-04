@@ -338,15 +338,31 @@ router.get("/getRecentBookings", async (req, res) => {
     const totalBackups = await backup.countDocuments({});
     console.log(`Total backup entries in collection: ${totalBackups}`);
 
-    // Check if our specific backup exists
-    const specificBackup = await backup.findOne({ paymentId: "1bb3f37acc7747efac060e035653d52b" });
-    console.log("Specific backup found:", specificBackup ? "YES" : "NO");
+    // Check if our specific backup exists (Emma Häger booking)
+    const specificBackup = await backup.findOne({ paymentId: "E572572300870A1950E20C6AE8B1B902" });
+    console.log("Emma's canceled booking found:", specificBackup ? "YES" : "NO");
     if (specificBackup) {
-      console.log("Specific backup backupCreatedAt:", specificBackup.backupCreatedAt);
+      console.log("Emma's booking backupCreatedAt:", specificBackup.backupCreatedAt);
+      console.log("Emma's booking backupSource:", specificBackup.backupSource);
+      console.log("Emma's booking available:", specificBackup.available);
     }
+
+    // Also check by _id
+    const specificBackupById = await backup.findOne({ _id: new ObjectId("67f6214965e33d46ac9651c6") });
+    console.log("Emma's booking found by ID:", specificBackupById ? "YES" : "NO");
 
     // Get all backups first, then sort in JavaScript to handle mixed date formats
     const allBackups = await backup.find(backupQueryCondition).toArray();
+    
+    console.log(`Found ${allBackups.length} backups matching query condition`);
+    console.log("Emma's booking should match query:", JSON.stringify({
+      available: false,
+      backupSource: "canceled"
+    }));
+    
+    // Check if Emma's booking is in the results
+    const emmaBooking = allBackups.find(b => b._id.toString() === "67f6214965e33d46ac9651c6");
+    console.log("Emma's booking in query results:", emmaBooking ? "YES" : "NO");
 
     // Sort by actual date values, handling different formats
     const recentBackups = allBackups
