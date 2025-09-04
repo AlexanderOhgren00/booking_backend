@@ -320,7 +320,6 @@ router.get("/getRecentBookings", async (req, res) => {
     };
 
     if (lastDate) {
-      console.log(`Fetching bookings before or equal to date: ${lastDate}`);
       queryCondition.bookedAt = { $lte: lastDate };
       backupQueryCondition.backupCreatedAt = { $lte: lastDate };
     }
@@ -332,37 +331,9 @@ router.get("/getRecentBookings", async (req, res) => {
       .toArray();
 
     // Get recent bookings from the backup collection
-    console.log("Backup query condition:", JSON.stringify(backupQueryCondition, null, 2));
-
-    // First, count total backup entries
-    const totalBackups = await backup.countDocuments({});
-    console.log(`Total backup entries in collection: ${totalBackups}`);
-
-    // Check if our specific backup exists (Emma Häger booking)
-    const specificBackup = await backup.findOne({ paymentId: "E572572300870A1950E20C6AE8B1B902" });
-    console.log("Emma's canceled booking found:", specificBackup ? "YES" : "NO");
-    if (specificBackup) {
-      console.log("Emma's booking backupCreatedAt:", specificBackup.backupCreatedAt);
-      console.log("Emma's booking backupSource:", specificBackup.backupSource);
-      console.log("Emma's booking available:", specificBackup.available);
-    }
-
-    // Also check by _id
-    const specificBackupById = await backup.findOne({ _id: new ObjectId("67f6214965e33d46ac9651c6") });
-    console.log("Emma's booking found by ID:", specificBackupById ? "YES" : "NO");
 
     // Get all backups first, then sort in JavaScript to handle mixed date formats
     const allBackups = await backup.find(backupQueryCondition).toArray();
-    
-    console.log(`Found ${allBackups.length} backups matching query condition`);
-    console.log("Emma's booking should match query:", JSON.stringify({
-      available: false,
-      backupSource: "canceled"
-    }));
-    
-    // Check if Emma's booking is in the results
-    const emmaBooking = allBackups.find(b => b._id.toString() === "67f6214965e33d46ac9651c6");
-    console.log("Emma's booking in query results:", emmaBooking ? "YES" : "NO");
 
     // Sort by actual date values, handling different formats
     const recentBackups = allBackups
@@ -373,28 +344,11 @@ router.get("/getRecentBookings", async (req, res) => {
       })
       .slice(0, 10);
 
-    console.log(`Found ${recentBackups.length} backup entries after query`);
-    if (recentBackups.length > 0) {
-      console.log("Latest backup backupCreatedAt:", recentBackups[0].backupCreatedAt);
-      console.log("All backup dates:", recentBackups.map(b => b.backupCreatedAt));
-    }
-
     // Merge both arrays and remove duplicates based on _id
     const merged = [...recentBookings, ...recentBackups];
-    console.log(`Merged array has ${merged.length} items`);
-    
-    // Check if Emma's booking is in merged array
-    const emmaInMerged = merged.find(b => b._id.toString() === "67f6214965e33d46ac9651c6");
-    console.log("Emma's booking in merged array:", emmaInMerged ? "YES" : "NO");
-    
     const uniqueBookings = merged.filter((booking, index, self) => 
       index === self.findIndex(b => b._id.toString() === booking._id.toString())
     );
-    console.log(`Unique bookings array has ${uniqueBookings.length} items`);
-    
-    // Check if Emma's booking is in unique array
-    const emmaInUnique = uniqueBookings.find(b => b._id.toString() === "67f6214965e33d46ac9651c6");
-    console.log("Emma's booking in unique array:", emmaInUnique ? "YES" : "NO");
     
     const allRecentBookings = uniqueBookings
       .sort((a, b) => {
@@ -407,25 +361,10 @@ router.get("/getRecentBookings", async (req, res) => {
           new Date(b.backupCreatedAt || b.bookedAt).getTime() : 
           new Date(b.bookedAt || b.backupCreatedAt).getTime() || 0;
         return timeB - timeA; // Sort descending (most recent first)
-      });
-    
-    console.log(`Sorted array has ${allRecentBookings.length} items`);
-    
-    // Check if Emma's booking is in final sorted array
-    const emmaInSorted = allRecentBookings.find(b => b._id.toString() === "67f6214965e33d46ac9651c6");
-    console.log("Emma's booking in sorted array:", emmaInSorted ? "YES" : "NO");
-    if (emmaInSorted) {
-      const emmaIndex = allRecentBookings.findIndex(b => b._id.toString() === "67f6214965e33d46ac9651c6");
-      console.log(`Emma's booking is at index ${emmaIndex} in sorted array`);
-    }
-    
-    const finalResults = allRecentBookings.slice(0, 10); // Take only the 10 most recent entries
-    
-    // Check if Emma's booking is in final results
-    const emmaInFinal = finalResults.find(b => b._id.toString() === "67f6214965e33d46ac9651c6");
-    console.log("Emma's booking in final results:", emmaInFinal ? "YES" : "NO");
+      })
+      .slice(0, 10); // Take only the 10 most recent entries
 
-    res.json(finalResults);
+    res.json(allRecentBookings);
   } catch (error) {
     console.error("Error fetching recent bookings:", error);
     res.status(500).json({ error: error.message });
