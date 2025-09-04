@@ -381,9 +381,20 @@ router.get("/getRecentBookings", async (req, res) => {
 
     // Merge both arrays and remove duplicates based on _id
     const merged = [...recentBookings, ...recentBackups];
+    console.log(`Merged array has ${merged.length} items`);
+    
+    // Check if Emma's booking is in merged array
+    const emmaInMerged = merged.find(b => b._id.toString() === "67f6214965e33d46ac9651c6");
+    console.log("Emma's booking in merged array:", emmaInMerged ? "YES" : "NO");
+    
     const uniqueBookings = merged.filter((booking, index, self) => 
       index === self.findIndex(b => b._id.toString() === booking._id.toString())
     );
+    console.log(`Unique bookings array has ${uniqueBookings.length} items`);
+    
+    // Check if Emma's booking is in unique array
+    const emmaInUnique = uniqueBookings.find(b => b._id.toString() === "67f6214965e33d46ac9651c6");
+    console.log("Emma's booking in unique array:", emmaInUnique ? "YES" : "NO");
     
     const allRecentBookings = uniqueBookings
       .sort((a, b) => {
@@ -391,10 +402,25 @@ router.get("/getRecentBookings", async (req, res) => {
         const timeA = a.bookedAt || a.backupCreatedAt ? new Date(a.bookedAt || a.backupCreatedAt).getTime() : 0;
         const timeB = b.bookedAt || b.backupCreatedAt ? new Date(b.bookedAt || b.backupCreatedAt).getTime() : 0;
         return timeB - timeA; // Sort descending (most recent first)
-      })
-      .slice(0, 10); // Take only the 10 most recent entries
+      });
+    
+    console.log(`Sorted array has ${allRecentBookings.length} items`);
+    
+    // Check if Emma's booking is in final sorted array
+    const emmaInSorted = allRecentBookings.find(b => b._id.toString() === "67f6214965e33d46ac9651c6");
+    console.log("Emma's booking in sorted array:", emmaInSorted ? "YES" : "NO");
+    if (emmaInSorted) {
+      const emmaIndex = allRecentBookings.findIndex(b => b._id.toString() === "67f6214965e33d46ac9651c6");
+      console.log(`Emma's booking is at index ${emmaIndex} in sorted array`);
+    }
+    
+    const finalResults = allRecentBookings.slice(0, 10); // Take only the 10 most recent entries
+    
+    // Check if Emma's booking is in final results
+    const emmaInFinal = finalResults.find(b => b._id.toString() === "67f6214965e33d46ac9651c6");
+    console.log("Emma's booking in final results:", emmaInFinal ? "YES" : "NO");
 
-    res.json(allRecentBookings);
+    res.json(finalResults);
   } catch (error) {
     console.error("Error fetching recent bookings:", error);
     res.status(500).json({ error: error.message });
