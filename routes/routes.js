@@ -398,9 +398,14 @@ router.get("/getRecentBookings", async (req, res) => {
     
     const allRecentBookings = uniqueBookings
       .sort((a, b) => {
-        // Handle case when date might be missing
-        const timeA = a.bookedAt || a.backupCreatedAt ? new Date(a.bookedAt || a.backupCreatedAt).getTime() : 0;
-        const timeB = b.bookedAt || b.backupCreatedAt ? new Date(b.bookedAt || b.backupCreatedAt).getTime() : 0;
+        // For canceled bookings, prioritize backupCreatedAt over bookedAt
+        // For other bookings, use bookedAt or backupCreatedAt as fallback
+        const timeA = a.backupSource === "canceled" ? 
+          new Date(a.backupCreatedAt || a.bookedAt).getTime() : 
+          new Date(a.bookedAt || a.backupCreatedAt).getTime() || 0;
+        const timeB = b.backupSource === "canceled" ? 
+          new Date(b.backupCreatedAt || b.bookedAt).getTime() : 
+          new Date(b.bookedAt || b.backupCreatedAt).getTime() || 0;
         return timeB - timeA; // Sort descending (most recent first)
       });
     
