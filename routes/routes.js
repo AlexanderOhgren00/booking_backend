@@ -5529,6 +5529,106 @@ router.get('/notifications/:username/unread-count', authenticateToken, async (re
   }
 });
 
+// Check booking status for confirmation
+router.post("/checkBookingStatus", async (req, res) => {
+  try {
+    const { timeSlotId } = req.body;
+    const collections = db.collection("bookings");
+    
+    const booking = await collections.findOne({ timeSlotId });
+    
+    if (!booking) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+    
+    res.json({
+      available: booking.available,
+      paymentId: booking.paymentId
+    });
+  } catch (error) {
+    console.error("Error checking booking status:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Confirm booking from Senaste view
+router.post("/confirmBookingFromSenaste", async (req, res) => {
+  try {
+    const { timeSlotId, bookingData } = req.body;
+    const collections = db.collection("bookings");
+    
+    // First, check if the timeslot exists and get its current status
+    const existingBooking = await collections.findOne({ timeSlotId });
+    
+    if (!existingBooking) {
+      return res.status(404).json({ error: "Timeslot not found" });
+    }
+    
+    // Check if the slot is available or occupied by the same paymentId
+    const canConfirm = existingBooking.available === true || 
+      (existingBooking.available === "occupied" && existingBooking.paymentId === bookingData.paymentId);
+    
+    if (!canConfirm) {
+      return res.status(400).json({ error: "Cannot confirm booking - slot is already booked by someone else" });
+    }
+    
+    // Get current Sweden time for bookedAt
+    const currentTime = new Date();
+    const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Europe/Stockholm',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    }).format(currentTime);
+    
+    // Update the booking with confirmed status
+    const result = await collections.updateOne(
+      { timeSlotId },
+      {
+        $set: {
+          available: false,
+          bookedBy: bookingData.bookedBy,
+          number: bookingData.number,
+          email: bookingData.email,
+          players: bookingData.players,
+          cost: bookingData.cost,
+          payed: bookingData.payed || "Bekräftad från Senaste",
+          bookingRef: bookingData.bookingRef,
+          paymentId: bookingData.paymentId,
+          offer: bookingData.offer,
+          info: bookingData.info,
+          bookedAt: swedenTime,
+          updatedAt: new Date(),
+          confirmedFromSenaste: true
+        }
+      }
+    );
+    
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "Booking not found for update" });
+    }
+    
+    if (result.modifiedCount === 0) {
+      return res.status(400).json({ error: "No changes made to booking" });
+    }
+    
+    console.log(`Booking confirmed from Senaste: ${timeSlotId} by ${bookingData.bookedBy}`);
+    
+    res.json({ 
+      message: "Booking confirmed successfully",
+      timeSlotId,
+      confirmedBy: bookingData.bookedBy
+    });
+    
+  } catch (error) {
+    console.error("Error confirming booking from Senaste:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;
 
 // const order = {
