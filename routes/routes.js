@@ -9,8 +9,9 @@ import fs from 'fs';
 import https from 'https';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import axios from 'axios';  
+import axios from 'axios';
 import nodemailer from 'nodemailer';
+import { sendCriticalAlert } from '../alerts.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -23,7 +24,48 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December"
 ];
 
-const paymentStates = {};
+// ✅ FIX VULNERABILITY #3: Replace in-memory paymentStates with database-backed sessions
+// Payment session helper functions
+async function createPaymentSession(paymentId, data, type = "booking") {
+  const sessionCollection = db.collection("payment_sessions");
+  const currentDate = new Date();
+
+  await sessionCollection.insertOne({
+    paymentId,
+    type,
+    status: "pending",
+    createdAt: currentDate,
+    expiresAt: new Date(currentDate.getTime() + 120 * 60 * 1000), // 120 minutes (2 hours) - extended from 30 min to reduce timeout issues
+    data,
+    metadata: {}
+  });
+
+  console.log(`Created payment session: ${paymentId}`);
+}
+
+async function getPaymentSession(paymentId) {
+  const sessionCollection = db.collection("payment_sessions");
+  return await sessionCollection.findOne({ paymentId, status: "pending" });
+}
+
+async function deletePaymentSession(paymentId) {
+  const sessionCollection = db.collection("payment_sessions");
+  await sessionCollection.deleteOne({ paymentId });
+  console.log(`Deleted payment session: ${paymentId}`);
+}
+
+async function getAllPendingPaymentSessions() {
+  const sessionCollection = db.collection("payment_sessions");
+  return await sessionCollection.find({ status: "pending" }).toArray();
+}
+
+async function updatePaymentSessionStatus(paymentId, status) {
+  const sessionCollection = db.collection("payment_sessions");
+  await sessionCollection.updateOne(
+    { paymentId },
+    { $set: { status, completedAt: new Date() } }
+  );
+}
 
 // GA4 Tracking Function
 async function trackBookingCompleted() {
@@ -115,19 +157,128 @@ async function broadcast(data) {
 async function cleanUpPaymentStates() {
   const currentDate = new Date();
   console.log("===== Starting cleanUpPaymentStates =====");
-  console.log("Current paymentStates:", Object.keys(paymentStates).length > 0 ? Object.keys(paymentStates) : "No payment states");
+
+  // ✅ Get expired sessions from database instead of memory
+  const expiredSessions = await getAllPendingPaymentSessions();
+  console.log("Current pending payment sessions:", expiredSessions.length > 0 ? expiredSessions.map(s => s.paymentId) : "No payment sessions");
   const collections = db.collection("bookings");
 
-  for (const paymentId in paymentStates) {
-    const paymentDate = new Date(paymentStates[paymentId].date);
+  for (const session of expiredSessions) {
+    const paymentId = session.paymentId;
+    const paymentDate = new Date(session.createdAt);
     const timeDifference = (currentDate - paymentDate) / 1000 / 60;
 
     console.log(`Checking payment ${paymentId}, age: ${timeDifference.toFixed(2)} minutes`);
 
-    if (timeDifference > 30) {
+    if (timeDifference > 120) { // 120 minutes (2 hours) - extended from 30 min to match session expiration
       console.log(`Payment ${paymentId} expired (${timeDifference.toFixed(2)} minutes old)`);
 
-      for (const item of paymentStates[paymentId].data) {
+      // ✅ PHASE 3: Verify payment is actually abandoned before cleanup
+      let shouldCleanup = false;
+
+      try {
+        // Check payment status with Nets
+        console.log(`Checking Nets payment status for ${paymentId}`);
+        const netsStatusResponse = await fetch(
+          `https://api.dibspayment.eu/v1/payments/${paymentId}`,
+          {
+            method: "GET",
+            headers: { "Authorization": key }
+          }
+        );
+
+        if (netsStatusResponse.ok) {
+          const paymentData = await netsStatusResponse.json();
+          console.log(`Nets payment ${paymentId} status:`, paymentData.payment?.summary);
+
+          // Check if payment has reserved amount (user might still pay)
+          const reservedAmount = paymentData.payment?.summary?.reservedAmount || 0;
+          if (reservedAmount > 0) {
+            console.log(`⚠️  Payment ${paymentId} still has reserved amount: ${reservedAmount} - SKIPPING cleanup`);
+
+            // Extend expiration by 1 hour
+            const sessionCollection = db.collection("payment_sessions");
+            await sessionCollection.updateOne(
+              { paymentId },
+              {
+                $set: {
+                  expiresAt: new Date(currentDate.getTime() + 60 * 60 * 1000),
+                  extendedAt: new Date(),
+                  extensionReason: 'Payment still has reserved amount'
+                }
+              }
+            );
+            console.log(`Extended timeout for payment ${paymentId} by 1 hour`);
+            continue; // Don't clean up - payment still pending
+          }
+
+          // Check if payment was already charged (critical!)
+          const charges = paymentData.payment?.charges || [];
+          if (charges.length > 0) {
+            console.error(`🚨 CRITICAL: Payment ${paymentId} was CHARGED but booking exists in occupied state!`);
+            console.error(`This should be impossible - booking should have been confirmed.`);
+            console.error(`Charges:`, charges);
+            console.error(`Skipping cleanup - needs manual investigation`);
+            continue; // Don't clean up - needs manual investigation
+          }
+
+          // Check payment state
+          const paymentState = paymentData.payment?.summary?.state;
+          console.log(`Payment ${paymentId} state: ${paymentState}`);
+
+          if (['CREATED', 'AUTHORIZED'].includes(paymentState)) {
+            console.log(`Payment ${paymentId} is ${paymentState} - extending timeout`);
+
+            // Extend expiration by 1 hour
+            const sessionCollection = db.collection("payment_sessions");
+            await sessionCollection.updateOne(
+              { paymentId },
+              {
+                $set: {
+                  expiresAt: new Date(currentDate.getTime() + 60 * 60 * 1000),
+                  extendedAt: new Date(),
+                  extensionReason: `Payment still ${paymentState}`
+                }
+              }
+            );
+            console.log(`Extended timeout for payment ${paymentId} by 1 hour`);
+            continue; // Don't clean up yet
+          }
+
+          // Payment is CANCELLED, FAILED, or EXPIRED - safe to clean up
+          console.log(`Payment ${paymentId} is ${paymentState} - safe to clean up`);
+          shouldCleanup = true;
+
+        } else if (netsStatusResponse.status === 404) {
+          // Payment doesn't exist in Nets - probably a Swish payment or already terminated
+          console.log(`Payment ${paymentId} not found in Nets (404) - likely Swish payment or already terminated`);
+          // For Swish payments, we rely on session expiration since Swish doesn't have a status API
+          shouldCleanup = true;
+
+        } else {
+          console.error(`Error checking Nets payment status: ${netsStatusResponse.status}`);
+          console.log(`Conservative approach: SKIPPING cleanup for ${paymentId}`);
+          continue; // Don't clean up if we can't verify
+        }
+
+      } catch (statusError) {
+        console.error(`Error verifying payment status for ${paymentId}:`, statusError.message);
+        console.log(`Conservative approach: SKIPPING cleanup`);
+        continue; // Don't clean up if verification fails
+      }
+
+      // Only proceed with cleanup if we verified it's safe
+      if (!shouldCleanup) {
+        console.log(`Skipping cleanup for ${paymentId} - payment may still complete`);
+        continue;
+      }
+
+      console.log(`✅ Proceeding with cleanup for ${paymentId}`);
+
+      // Track if any bookings were successfully reset
+      let anyBookingReset = false;
+
+      for (const item of session.data) {
         // Create timeSlotId from booking data
         const timeSlotId = `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`;
 
@@ -194,35 +345,96 @@ async function cleanUpPaymentStates() {
             console.log(`⚠️ Booking found but not modified for timeSlotId: ${timeSlotId}`);
           } else {
             console.log(`✅ Successfully reset booking for timeSlotId: ${timeSlotId}`);
-            try {
-              console.log(`Attempting to terminate payment ${paymentId} on payment provider`);
-              const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
-                method: "PUT",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Authorization": key,
-                },
-              });
-      
-              if (response.ok) {
-                console.log(`✅ Payment ${paymentId} terminated successfully on payment provider`);
-              } else {
-                console.error(`❌ Failed to terminate payment ${paymentId} on provider:`, await response.text());
-              }
-            } catch (error) {
-              console.error(`❌ Error terminating payment ${paymentId}:`, error);
-            }
+            anyBookingReset = true;
           }
         } catch (updateError) {
           console.error(`❌ Error processing booking reset for ${timeSlotId}:`, updateError);
           console.error(`Error stack:`, updateError.stack);
         }
       }
-      // Remove from paymentStates
-      console.log(`Removing payment ${paymentId} from paymentStates`);
-      delete paymentStates[paymentId];
-      console.log(`✅ Removed payment ${paymentId} from paymentStates`);
-      console.log(`Current paymentStates after removal:`, Object.keys(paymentStates).length > 0 ? Object.keys(paymentStates) : "No payment states");
+
+      // Terminate/cancel payment on provider side ONCE after all bookings processed
+      if (anyBookingReset) {
+        // Terminate Nets Easy payment
+        try {
+          console.log(`Attempting to terminate Nets payment ${paymentId}`);
+          const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": key,
+            },
+          });
+
+          if (response.ok) {
+            console.log(`✅ Nets payment ${paymentId} terminated successfully`);
+          } else if (response.status === 404) {
+            console.log(`⚠️  Nets payment ${paymentId} not found (likely a Swish payment)`);
+          } else {
+            console.error(`❌ Failed to terminate Nets payment ${paymentId}:`, await response.text());
+          }
+        } catch (error) {
+          console.error(`❌ Error terminating Nets payment ${paymentId}:`, error);
+        }
+
+        // Cancel Swish payment
+        try {
+          console.log(`Attempting to cancel Swish payment ${paymentId}`);
+
+          // Load certificates for Swish API
+          const swishCert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
+          const swishKey = fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), 'utf8');
+          const swishCa = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), 'utf8');
+
+          const httpsAgent = new https.Agent({
+            cert: swishCert,
+            key: swishKey,
+            ca: swishCa,
+            minVersion: 'TLSv1.2',
+            rejectUnauthorized: false
+          });
+
+          const client = axios.create({ httpsAgent });
+
+          const cancelResponse = await client.patch(
+            `https://cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests/${paymentId}`,
+            [{
+              "op": "replace",
+              "path": "/status",
+              "value": "cancelled"
+            }],
+            {
+              headers: {
+                "Content-Type": "application/json-patch+json"
+              },
+              validateStatus: false
+            }
+          );
+
+          if (cancelResponse.status === 200 || cancelResponse.status === 204) {
+            console.log(`✅ Swish payment ${paymentId} cancelled successfully`);
+          } else if (cancelResponse.status === 422) {
+            // RP07 error: Payment already signed/completed - cannot cancel
+            console.log(`⚠️  Swish payment ${paymentId} already processed (RP07) - cannot cancel signed/completed payment`);
+          } else if (cancelResponse.status === 404) {
+            console.log(`⚠️  Swish payment ${paymentId} not found (likely a Nets payment)`);
+          } else {
+            console.error(`❌ Failed to cancel Swish payment ${paymentId}:`, cancelResponse.status);
+            console.error(`Response:`, cancelResponse.data);
+          }
+
+        } catch (swishError) {
+          // Don't fail cleanup if Swish cancellation fails
+          console.error(`❌ Error cancelling Swish payment ${paymentId}:`, swishError.message);
+        }
+      }
+      // ✅ Remove from database instead of memory
+      console.log(`Removing payment ${paymentId} from payment_sessions`);
+      await updatePaymentSessionStatus(paymentId, "expired");
+      console.log(`✅ Removed payment ${paymentId} from payment_sessions`);
+
+      const remainingSessions = await getAllPendingPaymentSessions();
+      console.log(`Current payment sessions after removal:`, remainingSessions.length > 0 ? remainingSessions.map(s => s.paymentId) : "No payment sessions");
 
       // Broadcast update to all clients
       await broadcast({
@@ -268,19 +480,23 @@ router.post("/checkPaymentStates", async (req, res) => {
       });
     }
 
-    // Now check if this paymentId is in the paymentStates
+    // ✅ Check if this paymentId is in the database payment sessions
     const paymentId = booking.paymentId;
-    const paymentState = paymentStates[paymentId];
+    const paymentState = await getPaymentSession(paymentId);
 
     if (paymentState) {
       console.log(`Active payment found for timeSlotId: ${timeSlotId}, paymentId: ${paymentId}`);
+      // Return backward-compatible format matching old in-memory structure
       return res.json({
         status: "active",
         paymentId: paymentId,
-        data: paymentState
+        data: {
+          date: paymentState.createdAt,
+          data: paymentState.data
+        }
       });
     } else {
-      console.log(`Payment ${paymentId} not found in paymentStates for timeSlotId: ${timeSlotId}`);
+      console.log(`Payment ${paymentId} not found in payment_sessions for timeSlotId: ${timeSlotId}`);
       return res.json({
         status: "inactive",
         paymentId: paymentId,
@@ -522,8 +738,11 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       console.error(`❌ Error associating paymentId with bookings:`, associateError);
     }
 
-    for (const existingPaymentId in paymentStates) {
-      const existingData = paymentStates[existingPaymentId].data;
+    // ✅ Check for conflicts in database payment sessions instead of memory
+    const existingSessions = await getAllPendingPaymentSessions();
+    for (const existingSession of existingSessions) {
+      const existingPaymentId = existingSession.paymentId;
+      const existingData = existingSession.data;
       console.log(existingData, "existingData");
       const hasConflict = body.combinedData.some(newItem =>
         existingData.some(existingItem =>
@@ -536,7 +755,7 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       );
       console.log(hasConflict, "hasConflict");
       if (hasConflict) {
-        delete paymentStates[existingPaymentId];
+        await deletePaymentSession(existingPaymentId);
         console.log(`Removed conflicting payment state: ${existingPaymentId}`);
         // Load certificates
         const cert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
@@ -574,8 +793,9 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       }
     }
 
-    paymentStates[paymentId] = { date: currentDate, data: body.combinedData };
-    console.log("Payment states:", paymentStates);
+    // ✅ Create payment session in database instead of memory
+    await createPaymentSession(paymentId, body.combinedData, "booking");
+    console.log("Payment session created in database:", paymentId);
 
     res.status(200).json({ message: "Payment initialized", paymentId, date: currentDate });
     
@@ -726,6 +946,227 @@ router.post("/send-paylink", async (req, res) => {
           const collections = db.collection("bookings");
 
           const bookings = await collections.find({ paymentId: paymentId }).toArray();
+
+          // CRITICAL: Check for orphaned payment (payment completed but booking not found)
+          if (bookings.length === 0) {
+            const amount = orderData.amount.amount / 100;
+            console.error('═══════════════════════════════════════════════');
+            console.error('🚨 CRITICAL: ORPHANED PAYMENT DETECTED');
+            console.error('═══════════════════════════════════════════════');
+            console.error(`Payment ID: ${paymentId}`);
+            console.error(`Amount: ${amount} SEK`);
+            console.error(`Payment Method: Nets Easy`);
+            console.error(`Timestamp: ${new Date().toISOString()}`);
+            console.error('CUSTOMER WAS CHARGED BUT NO BOOKING EXISTS!');
+            console.error('═══════════════════════════════════════════════');
+
+            // ✅ PHASE 4: ATTEMPT RECOVERY FROM PAYMENT SESSION
+            const sessionCollection = db.collection("payment_sessions");
+            const paymentSession = await sessionCollection.findOne({ paymentId });
+
+            if (paymentSession && paymentSession.data && paymentSession.data.length > 0) {
+              console.log(`✅ Found payment session data - attempting recovery...`);
+              console.log(`Session data:`, paymentSession.data);
+
+              const recoveredBookings = [];
+              const failedRecoveries = [];
+
+              for (const item of paymentSession.data) {
+                const timeSlotId = `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`;
+                console.log(`Attempting to recover booking for slot: ${timeSlotId}`);
+
+                // Check current state of the slot
+                const currentBooking = await collections.findOne({ timeSlotId });
+
+                if (!currentBooking) {
+                  console.error(`❌ Slot ${timeSlotId} doesn't exist in database - cannot recover`);
+                  failedRecoveries.push({ timeSlotId, reason: 'Slot not found' });
+                  continue;
+                }
+
+                if (currentBooking.available === true || currentBooking.available === 'unlocked') {
+                  // ✅ Slot is available - we can restore the booking!
+                  console.log(`✅ Slot ${timeSlotId} is available - restoring booking`);
+
+                  const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+                    timeZone: 'Europe/Stockholm',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                  }).format(new Date());
+
+                  const result = await collections.updateOne(
+                    {
+                      timeSlotId,
+                      available: { $in: [true, 'unlocked'] }
+                    },
+                    {
+                      $set: {
+                        available: false,
+                        payed: "Nets Easy",
+                        paymentId: paymentId,
+                        bookedBy: item.bookedBy,
+                        email: item.email,
+                        number: item.number,
+                        cost: item.cost,
+                        players: item.players,
+                        bookingRef: item.bookingRef,
+                        bookedAt: swedenTime,
+                        updatedAt: new Date(),
+                        recovered: true,
+                        recoveredAt: new Date(),
+                        recoveryReason: 'Payment completed after cleanup'
+                      }
+                    }
+                  );
+
+                  if (result.modifiedCount > 0) {
+                    console.log(`✅ Successfully recovered booking for ${timeSlotId}`);
+
+                    // Recreate booking object for email
+                    const recoveredBooking = await collections.findOne({ timeSlotId });
+                    recoveredBookings.push(recoveredBooking);
+
+                  } else {
+                    console.error(`❌ Failed to update booking for ${timeSlotId}`);
+                    failedRecoveries.push({ timeSlotId, reason: 'Update failed' });
+                  }
+
+                } else if (currentBooking.available === 'occupied' && currentBooking.paymentId === paymentId) {
+                  // Booking exists with same paymentId - just update status
+                  console.log(`✅ Booking ${timeSlotId} already has correct paymentId - updating status`);
+
+                  const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+                    timeZone: 'Europe/Stockholm',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                  }).format(new Date());
+
+                  const result = await collections.updateOne(
+                    { timeSlotId, paymentId },
+                    {
+                      $set: {
+                        available: false,
+                        payed: "Nets Easy",
+                        bookedAt: swedenTime,
+                        updatedAt: new Date()
+                      }
+                    }
+                  );
+
+                  if (result.modifiedCount > 0) {
+                    const booking = await collections.findOne({ timeSlotId });
+                    recoveredBookings.push(booking);
+                  }
+
+                } else {
+                  // Slot is occupied by someone else - cannot recover
+                  console.error(`❌ UNRECOVERABLE: Slot ${timeSlotId} is occupied by another booking`);
+                  console.error(`Current booking:`, {
+                    available: currentBooking.available,
+                    paymentId: currentBooking.paymentId,
+                    email: currentBooking.email,
+                    bookedBy: currentBooking.bookedBy
+                  });
+
+                  failedRecoveries.push({
+                    timeSlotId,
+                    reason: 'Slot rebooked by another customer',
+                    currentBooking: {
+                      paymentId: currentBooking.paymentId,
+                      email: currentBooking.email,
+                      bookedAt: currentBooking.bookedAt
+                    }
+                  });
+                }
+              }
+
+              // Update bookings array for email sending
+              bookings.push(...recoveredBookings);
+
+              // Handle failed recoveries
+              if (failedRecoveries.length > 0) {
+                console.error(`❌ Could not recover ${failedRecoveries.length} bookings:`);
+                console.error(JSON.stringify(failedRecoveries, null, 2));
+
+                // Get customer email from session data
+                const customerEmail = paymentSession.data[0]?.email;
+                const customerName = paymentSession.data[0]?.bookedBy;
+
+                console.error(`🚨 UNRECOVERABLE BOOKINGS - MANUAL REFUND REQUIRED`);
+                console.error(`Customer: ${customerName} (${customerEmail})`);
+                console.error(`Amount: ${amount} SEK`);
+                console.error(`Failed bookings: ${JSON.stringify(failedRecoveries, null, 2)}`);
+
+                // ✅ PHASE 5: Send critical alert for unrecoverable bookings
+                try {
+                  await sendCriticalAlert({
+                    type: 'UNRECOVERABLE_BOOKINGS',
+                    severity: 'CRITICAL',
+                    paymentId: paymentId,
+                    customerEmail: customerEmail,
+                    customerName: customerName,
+                    failedRecoveries: failedRecoveries,
+                    amount: paymentSession.data.reduce((sum, item) => sum + (item.cost || 0), 0),
+                    paymentMethod: 'Nets Easy',
+                    timestamp: new Date(),
+                    message: `Payment completed but ${failedRecoveries.length} slot(s) were rebooked - manual refund required`,
+                    instructions: [
+                      '1. Contact customer immediately to apologize',
+                      '2. Offer full refund + compensation',
+                      '3. Try to find alternative time slots',
+                      '4. Document in customer service system'
+                    ]
+                  });
+                } catch (alertError) {
+                  console.error('Failed to send critical alert:', alertError);
+                }
+              }
+
+              // Log successful recovery
+              if (recoveredBookings.length > 0) {
+                console.log(`✅ Successfully recovered ${recoveredBookings.length} bookings`);
+                console.log(`Recovered bookings: ${recoveredBookings.map(b => b.timeSlotId).join(', ')}`);
+              }
+
+            } else {
+              // No session data - completely lost
+              console.error(`❌ No payment session found for ${paymentId}`);
+              console.error(`Cannot recover booking - all data lost`);
+
+              // ✅ PHASE 5: Send critical alert when payment data is completely lost
+              try {
+                await sendCriticalAlert({
+                  type: 'PAYMENT_DATA_LOST',
+                  severity: 'CRITICAL',
+                  paymentId: paymentId,
+                  amount: orderData.amount.amount / 100,
+                  currency: 'SEK',
+                  paymentMethod: 'Nets Easy',
+                  timestamp: new Date(),
+                  message: 'Payment completed but session data not found - manual investigation required',
+                  webhook: req.body
+                });
+              } catch (alertError) {
+                console.error('Failed to send critical alert:', alertError);
+              }
+
+              // Return 200 OK to prevent Nets from retrying
+              return res.status(200).json({
+                received: true,
+                error: 'Booking data not recoverable',
+                requiresManualRefund: true
+              });
+            }
+          }
+
           const originalTotalCost = bookings.reduce((sum, b) => sum + (b.cost || 0), 0);
           const amountPaid = orderData.amount.amount / 100;   // SEK
           const giftCardUsed = originalTotalCost - amountPaid;
@@ -975,9 +1416,11 @@ router.post("/send-paylink", async (req, res) => {
             // Continue processing even if email fails
           }
 
-          if (paymentStates[paymentId]) {
-            delete paymentStates[paymentId];
-            console.log("Payment terminated from paymentStates:", paymentId);
+          // ✅ Delete payment session from database
+          const session = await getPaymentSession(paymentId);
+          if (session) {
+            await deletePaymentSession(paymentId);
+            console.log("Payment session deleted from database:", paymentId);
           }
 
           break;
@@ -1130,7 +1573,8 @@ router.put("/v1/payments/:paymentId/terminate", async (req, res) => {
       },
     });
 
-    delete paymentStates[paymentId];
+    // ✅ Delete payment session from database
+    await deletePaymentSession(paymentId);
 
     const data = { message: "Payment terminated", paymentId };
     res.json(data);
@@ -3064,12 +3508,45 @@ router.get("/years", haltOnTimedout, async (req, res) => {
 router.patch("/checkout", async (req, res) => {
   const { year, month, day, category, time, ...updateData } = req.body;
   const isFromAdmin = req.query.fromAdmin === 'true' || req.headers['x-from-admin'] === 'true';
-  
+
   try {
-    const result = await db.collection("bookings").updateOne(
-      { timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}` },
-      { $set: { ...updateData, updatedAt: new Date() } }
+    const timeSlotId = `${year}-${month}-${day}-${category.trim()}-${time}`;
+
+    // Use atomic findOneAndUpdate with availability condition to prevent race conditions
+    const findConditions = isFromAdmin
+      ? { timeSlotId }  // Admin can override
+      : {
+          timeSlotId,
+          $or: [
+            { available: true },  // Slot is available
+            { available: { $exists: false } },  // No availability field yet
+            {
+              paymentId: updateData.paymentId,  // Same payment is updating
+              payed: false  // Not yet confirmed
+            }
+          ]
+        };
+
+    const result = await db.collection("bookings").findOneAndUpdate(
+      findConditions,
+      {
+        $set: { ...updateData, updatedAt: new Date() },
+        $setOnInsert: { createdAt: new Date() }
+      },
+      {
+        returnDocument: 'after',
+        upsert: false  // Don't create if doesn't exist
+      }
     );
+
+    // Check if update actually happened
+    if (!result.value && !isFromAdmin) {
+      return res.status(409).json({
+        error: "Slot already booked by another customer",
+        code: "SLOT_UNAVAILABLE",
+        timeSlotId
+      });
+    }
     
     // If this is a cancellation (available: true) from admin with action=cancel, update cancelled slot with discount from other same time slots
     if (isFromAdmin && req.query.action === 'cancel' && updateData.available === true) {
@@ -3093,8 +3570,14 @@ router.patch("/checkout", async (req, res) => {
         );
       }
     }
-    
-    res.json(result);
+
+    // Return success response with booking data
+    res.json({
+      success: true,
+      booking: result.value,
+      matchedCount: result.value ? 1 : 0,
+      modifiedCount: result.lastErrorObject?.updatedExisting ? 1 : 0
+    });
     
     // Only broadcast if the request is from the admin page
     if (isFromAdmin) {
@@ -3334,14 +3817,15 @@ router.post("/swish-payment-confirmation", async (req, res) => {
     return res.status(400).json({ error: "Payment ID is required" });
   }
 
-  // If payment is still in paymentStates, it means it's still pending
-  if (paymentStates[paymentId]) {
+  // ✅ If payment is still in payment_sessions database, it means it's still pending
+  const paymentSession = await getPaymentSession(paymentId);
+  if (paymentSession) {
     return res.json({
       status: "NOT PAID"
     });
   }
 
-  // If not in paymentStates, check the database to see if it was actually paid
+  // If not in payment_sessions, check the database to see if it was actually paid
   try {
     const collections = db.collection("bookings");
     const booking = await collections.findOne({ 
@@ -3416,6 +3900,230 @@ router.post("/swish/callback", async (req, res) => {
         const paymentId = req.body.id;
 
         const bookings = await collections.find({ paymentId: paymentId }).toArray();
+
+        // CRITICAL: Check for orphaned payment (payment completed but booking not found)
+        if (bookings.length === 0) {
+          const amount = parseFloat(req.body.amount);
+          console.error('═══════════════════════════════════════════════');
+          console.error('🚨 CRITICAL: ORPHANED PAYMENT DETECTED');
+          console.error('═══════════════════════════════════════════════');
+          console.error(`Payment ID: ${paymentId}`);
+          console.error(`Amount: ${amount} SEK`);
+          console.error(`Payment Method: Swish`);
+          console.error(`Payer: ${req.body.payerAlias || 'Unknown'}`);
+          console.error(`Timestamp: ${new Date().toISOString()}`);
+          console.error('CUSTOMER WAS CHARGED BUT NO BOOKING EXISTS!');
+          console.error('═══════════════════════════════════════════════');
+
+          // ✅ PHASE 4: ATTEMPT RECOVERY FROM PAYMENT SESSION
+          const sessionCollection = db.collection("payment_sessions");
+          const paymentSession = await sessionCollection.findOne({ paymentId });
+
+          if (paymentSession && paymentSession.data && paymentSession.data.length > 0) {
+            console.log(`✅ Found payment session data - attempting recovery...`);
+            console.log(`Session data:`, paymentSession.data);
+
+            const recoveredBookings = [];
+            const failedRecoveries = [];
+
+            for (const item of paymentSession.data) {
+              const timeSlotId = `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`;
+              console.log(`Attempting to recover booking for slot: ${timeSlotId}`);
+
+              // Check current state of the slot
+              const currentBooking = await collections.findOne({ timeSlotId });
+
+              if (!currentBooking) {
+                console.error(`❌ Slot ${timeSlotId} doesn't exist in database - cannot recover`);
+                failedRecoveries.push({ timeSlotId, reason: 'Slot not found' });
+                continue;
+              }
+
+              if (currentBooking.available === true || currentBooking.available === 'unlocked') {
+                // ✅ Slot is available - we can restore the booking!
+                console.log(`✅ Slot ${timeSlotId} is available - restoring booking`);
+
+                const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+                  timeZone: 'Europe/Stockholm',
+                  year: 'numeric',
+                  month: '2-digit',
+                  day: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit'
+                }).format(new Date());
+
+                const result = await collections.updateOne(
+                  {
+                    timeSlotId,
+                    available: { $in: [true, 'unlocked'] }
+                  },
+                  {
+                    $set: {
+                      available: false,
+                      payed: "Swish",
+                      paymentId: paymentId,
+                      bookedBy: item.bookedBy,
+                      email: item.email,
+                      number: item.number,
+                      cost: item.cost,
+                      players: item.players,
+                      bookingRef: item.bookingRef,
+                      bookedAt: swedenTime,
+                      updatedAt: new Date(),
+                      recovered: true,
+                      recoveredAt: new Date(),
+                      recoveryReason: 'Payment completed after cleanup'
+                    }
+                  }
+                );
+
+                if (result.modifiedCount > 0) {
+                  console.log(`✅ Successfully recovered booking for ${timeSlotId}`);
+
+                  // Recreate booking object for email
+                  const recoveredBooking = await collections.findOne({ timeSlotId });
+                  recoveredBookings.push(recoveredBooking);
+
+                } else {
+                  console.error(`❌ Failed to update booking for ${timeSlotId}`);
+                  failedRecoveries.push({ timeSlotId, reason: 'Update failed' });
+                }
+
+              } else if (currentBooking.available === 'occupied' && currentBooking.paymentId === paymentId) {
+                // Booking exists with same paymentId - just update status
+                console.log(`✅ Booking ${timeSlotId} already has correct paymentId - updating status`);
+
+                const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+                  timeZone: 'Europe/Stockholm',
+                  year: 'numeric',
+                  month: '2-digit',
+                  day: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit'
+                }).format(new Date());
+
+                const result = await collections.updateOne(
+                  { timeSlotId, paymentId },
+                  {
+                    $set: {
+                      available: false,
+                      payed: "Swish",
+                      bookedAt: swedenTime,
+                      updatedAt: new Date()
+                    }
+                  }
+                );
+
+                if (result.modifiedCount > 0) {
+                  const booking = await collections.findOne({ timeSlotId });
+                  recoveredBookings.push(booking);
+                }
+
+              } else {
+                // Slot is occupied by someone else - cannot recover
+                console.error(`❌ UNRECOVERABLE: Slot ${timeSlotId} is occupied by another booking`);
+                console.error(`Current booking:`, {
+                  available: currentBooking.available,
+                  paymentId: currentBooking.paymentId,
+                  email: currentBooking.email,
+                  bookedBy: currentBooking.bookedBy
+                });
+
+                failedRecoveries.push({
+                  timeSlotId,
+                  reason: 'Slot rebooked by another customer',
+                  currentBooking: {
+                    paymentId: currentBooking.paymentId,
+                    email: currentBooking.email,
+                    bookedAt: currentBooking.bookedAt
+                  }
+                });
+              }
+            }
+
+            // Update bookings array for email sending
+            bookings.push(...recoveredBookings);
+
+            // Handle failed recoveries
+            if (failedRecoveries.length > 0) {
+              console.error(`❌ Could not recover ${failedRecoveries.length} bookings:`);
+              console.error(JSON.stringify(failedRecoveries, null, 2));
+
+              // Get customer email from session data
+              const customerEmail = paymentSession.data[0]?.email;
+              const customerName = paymentSession.data[0]?.bookedBy;
+
+              console.error(`🚨 UNRECOVERABLE BOOKINGS - MANUAL REFUND REQUIRED`);
+              console.error(`Customer: ${customerName} (${customerEmail})`);
+              console.error(`Amount: ${amount} SEK`);
+              console.error(`Failed bookings: ${JSON.stringify(failedRecoveries, null, 2)}`);
+
+              // ✅ PHASE 5: Send critical alert for unrecoverable bookings
+              try {
+                await sendCriticalAlert({
+                  type: 'UNRECOVERABLE_BOOKINGS',
+                  severity: 'CRITICAL',
+                  paymentId: paymentId,
+                  customerEmail: customerEmail,
+                  customerName: customerName,
+                  failedRecoveries: failedRecoveries,
+                  amount: paymentSession.data.reduce((sum, item) => sum + (item.cost || 0), 0),
+                  paymentMethod: 'Swish',
+                  payerAlias: req.body.payerAlias,
+                  timestamp: new Date(),
+                  message: `Payment completed but ${failedRecoveries.length} slot(s) were rebooked - manual refund required`,
+                  instructions: [
+                    '1. Contact customer immediately to apologize',
+                    '2. Offer full refund + compensation',
+                    '3. Try to find alternative time slots',
+                    '4. Document in customer service system'
+                  ]
+                });
+              } catch (alertError) {
+                console.error('Failed to send critical alert:', alertError);
+              }
+            }
+
+            // Log successful recovery
+            if (recoveredBookings.length > 0) {
+              console.log(`✅ Successfully recovered ${recoveredBookings.length} bookings`);
+              console.log(`Recovered bookings: ${recoveredBookings.map(b => b.timeSlotId).join(', ')}`);
+            }
+
+          } else {
+            // No session data - completely lost
+            console.error(`❌ No payment session found for ${paymentId}`);
+            console.error(`Cannot recover booking - all data lost`);
+
+            // ✅ PHASE 5: Send critical alert when payment data is completely lost
+            try {
+              await sendCriticalAlert({
+                type: 'PAYMENT_DATA_LOST',
+                severity: 'CRITICAL',
+                paymentId: paymentId,
+                amount: parseFloat(req.body.amount),
+                currency: 'SEK',
+                paymentMethod: 'Swish',
+                payerAlias: req.body.payerAlias,
+                timestamp: new Date(),
+                message: 'Payment completed but session data not found - manual investigation required',
+                webhook: req.body
+              });
+            } catch (alertError) {
+              console.error('Failed to send critical alert:', alertError);
+            }
+
+            // Return 200 OK to prevent Swish from retrying
+            return res.status(200).json({
+              status: 'OK',
+              error: 'Booking data not recoverable',
+              requiresManualRefund: true
+            });
+          }
+        }
+
         const originalTotalCost = bookings.reduce((sum, b) => sum + (b.cost || 0), 0);
         const amountPaid = parseFloat(req.body.amount);     // SEK
         const giftCardUsed = originalTotalCost - amountPaid;
@@ -3654,9 +4362,11 @@ router.post("/swish/callback", async (req, res) => {
           // Continue processing even if email fails
         }
 
-        if (paymentStates[paymentId]) {
-          delete paymentStates[paymentId];
-          console.log("Payment terminated from paymentStates:", paymentId);
+        // ✅ Delete payment session from database
+        const session = await getPaymentSession(paymentId);
+        if (session) {
+          await deletePaymentSession(paymentId);
+          console.log("Payment session deleted from database:", paymentId);
         }
 
       } catch (dbError) {
@@ -3704,10 +4414,11 @@ router.post("/swish/callback", async (req, res) => {
           console.log(`⚠️ No bookings found with paymentId: ${paymentId} - might already be cleaned up`);
         }
 
-        // Clean up payment states
-        if (paymentStates[paymentId]) {
-          delete paymentStates[paymentId];
-          console.log(`Removed failed payment ${paymentId} from paymentStates`);
+        // ✅ Clean up payment sessions from database
+        const failedSession = await getPaymentSession(paymentId);
+        if (failedSession) {
+          await deletePaymentSession(paymentId);
+          console.log(`Removed failed payment ${paymentId} from payment_sessions`);
         }
 
         // Terminate the payment on Swish provider
@@ -4829,14 +5540,10 @@ router.post("/v1/giftcard-payments/:paymentId/initialize", async (req, res) => {
 
     console.log(`Initializing gift card payment: ${paymentId}`);
 
-    // Store payment state for tracking
-    paymentStates[paymentId] = { 
-      date: currentDate, 
-      data: body.giftCardData,
-      type: "giftcard"
-    };
+    // ✅ Store payment state in database for tracking
+    await createPaymentSession(paymentId, body.giftCardData, "giftcard");
 
-    console.log("Gift card payment states:", Object.keys(paymentStates));
+    console.log("Gift card payment session created in database:", paymentId);
 
     res.status(200).json({ 
       message: "Gift card payment initialized", 
@@ -4978,7 +5685,9 @@ router.post("/swish-giftcard-payment-confirmation", async (req, res) => {
     return res.status(400).json({ error: "Payment ID is required" });
   }
 
-  if (!paymentStates[paymentId]) {
+  // ✅ Check payment session in database
+  const giftCardSession = await getPaymentSession(paymentId);
+  if (!giftCardSession) {
     return res.json({
       status: "PAID"
     });
@@ -5136,10 +5845,11 @@ router.post("/swish/giftcard-callback", async (req, res) => {
           console.error("Error sending gift card email:", emailError);
         }
 
-        // Remove from payment states
-        if (paymentStates[instructionId]) {
-          delete paymentStates[instructionId];
-          console.log("Gift card payment terminated from paymentStates:", instructionId);
+        // ✅ Remove from payment sessions database
+        const giftSession = await getPaymentSession(instructionId);
+        if (giftSession) {
+          await deletePaymentSession(instructionId);
+          console.log("Gift card payment session deleted from database:", instructionId);
         }
 
       } catch (dbError) {
@@ -5324,11 +6034,14 @@ router.post("/giftCardCreated", async (req, res) => {
           console.error("Error sending gift card email:", emailError);
         }
 
-        // Remove from payment states - use instructionId if available
+        // ✅ Remove from payment sessions database - use instructionId if available
         const giftCards = await collections.find({ netsPaymentId: paymentId }).toArray();
-        if (giftCards.length > 0 && giftCards[0].instructionId && paymentStates[giftCards[0].instructionId]) {
-          delete paymentStates[giftCards[0].instructionId];
-          console.log("Gift card payment terminated from paymentStates:", giftCards[0].instructionId);
+        if (giftCards.length > 0 && giftCards[0].instructionId) {
+          const giftCardSession = await getPaymentSession(giftCards[0].instructionId);
+          if (giftCardSession) {
+            await deletePaymentSession(giftCards[0].instructionId);
+            console.log("Gift card payment session deleted from database:", giftCards[0].instructionId);
+          }
         }
 
         break;
