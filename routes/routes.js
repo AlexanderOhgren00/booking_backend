@@ -35,7 +35,7 @@ async function createPaymentSession(paymentId, data, type = "booking") {
     type,
     status: "pending",
     createdAt: currentDate,
-    expiresAt: new Date(currentDate.getTime() + 120 * 60 * 1000), // 120 minutes (2 hours) - extended from 30 min to reduce timeout issues
+    expiresAt: new Date(currentDate.getTime() + 30 * 60 * 1000), // 30 minutes - customer requested timeout
     data,
     metadata: {}
   });
@@ -170,7 +170,7 @@ async function cleanUpPaymentStates() {
 
     console.log(`Checking payment ${paymentId}, age: ${timeDifference.toFixed(2)} minutes`);
 
-    if (timeDifference > 120) { // 120 minutes (2 hours) - extended from 30 min to match session expiration
+    if (timeDifference > 30) { // 30 minutes - customer requested timeout
       console.log(`Payment ${paymentId} expired (${timeDifference.toFixed(2)} minutes old)`);
 
       // ✅ PHASE 3: Verify payment is actually abandoned before cleanup
@@ -1201,6 +1201,49 @@ router.post("/send-paylink", async (req, res) => {
             modifiedCount: result.modifiedCount
           });
 
+          // ✅ CRITICAL CHECK: Verify bookings were actually updated
+          if (result.modifiedCount === 0) {
+            console.error('═══════════════════════════════════════════════');
+            console.error('🚨 CRITICAL: DATABASE UPDATE FAILED');
+            console.error('═══════════════════════════════════════════════');
+            console.error(`Payment ID: ${paymentId}`);
+            console.error(`Matched: ${result.matchedCount}, Modified: ${result.modifiedCount}`);
+            console.error(`Bookings found: ${bookings.length}`);
+            console.error('Payment received but database update failed!');
+            console.error('═══════════════════════════════════════════════');
+
+            // Send critical alert to admin
+            try {
+              await sendCriticalAlert({
+                type: 'DATABASE_UPDATE_FAILED',
+                severity: 'CRITICAL',
+                paymentId: paymentId,
+                amount: orderData.amount.amount / 100,
+                currency: 'SEK',
+                paymentMethod: 'Nets Easy',
+                customerEmail: bookings[0]?.email,
+                customerName: bookings[0]?.bookedBy,
+                timestamp: new Date(),
+                message: `Payment webhook received and charged successfully, but database update failed. Modified count: ${result.modifiedCount}, Matched count: ${result.matchedCount}`,
+                instructions: [
+                  '1. Check database connectivity and logs',
+                  '2. Verify booking records exist with this paymentId',
+                  '3. Manually update bookings to payed: "Nets Easy"',
+                  '4. Send confirmation email to customer manually',
+                  '5. Investigate why updateMany returned 0 modified'
+                ]
+              });
+            } catch (alertError) {
+              console.error('Failed to send critical alert:', alertError);
+            }
+
+            // Return 200 OK to prevent Nets from retrying
+            return res.status(200).json({
+              status: 'OK',
+              warning: 'Payment received but database update failed - manual intervention required'
+            });
+          }
+
           // Send GA4 tracking for completed booking
           if (result.modifiedCount > 0) {
             await trackBookingCompleted();
@@ -1267,18 +1310,19 @@ router.post("/send-paylink", async (req, res) => {
           }
 
           try {
-            const bookings = await collections.find({ paymentId: paymentId }).toArray();
+            // ✅ Fetch updated bookings with confirmed payment status
+            const updatedBookings = await collections.find({ paymentId: paymentId }).toArray();
 
-            if (bookings.length > 0 && bookings[0].email) {
+            if (updatedBookings.length > 0 && updatedBookings[0].email) {
               // Prepare booking details for email
-              const email = bookings[0].email;
-              const bookingRef = bookings[0].bookingRef;
+              const email = updatedBookings[0].email;
+              const bookingRef = updatedBookings[0].bookingRef;
               const bookingDate = new Date().toISOString().split('T')[0];
-              const totalCost = bookings.reduce((sum, booking) => sum + (booking.cost || 0), 0);
+              const totalCost = updatedBookings.reduce((sum, booking) => sum + (booking.cost || 0), 0);
               const tax = Math.round(totalCost * 0.20);
 
               // Prepare items for the email
-              const items = bookings.map(booking => ({
+              const items = updatedBookings.map(booking => ({
                 category: booking.category,
                 date: `${booking.day} ${booking.month} ${booking.year}`,
                 time: booking.time,
@@ -3527,10 +3571,16 @@ router.patch("/checkout", async (req, res) => {
           ]
         };
 
+    // Ensure slot is marked as occupied when booking (unless explicitly setting it to available from admin)
+    const shouldMarkOccupied = !isFromAdmin && updateData.payed === false && updateData.paymentId;
+    const setData = shouldMarkOccupied
+      ? { ...updateData, available: "occupied", updatedAt: new Date() }
+      : { ...updateData, updatedAt: new Date() };
+
     const result = await db.collection("bookings").findOneAndUpdate(
       findConditions,
       {
-        $set: { ...updateData, updatedAt: new Date() },
+        $set: setData,
         $setOnInsert: { createdAt: new Date() }
       },
       {
@@ -3606,24 +3656,57 @@ router.delete("/checkout", async (req, res) => {
     // Create the timeSlotId for finding the booking
     const timeSlotId = `${year}-${month}-${day}-${category.trim()}-${time}`;
 
-    // Delete the booking completely
-    const result = await collections.deleteOne({ timeSlotId: timeSlotId });
+    // Check if booking exists
+    const existingBooking = await collections.findOne({ timeSlotId: timeSlotId });
 
-    if (result.deletedCount === 0) {
+    if (!existingBooking) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    // If booking is already paid, don't allow deletion (safety check)
+    if (existingBooking.payed === true) {
+      return res.status(403).json({ error: "Cannot delete a confirmed booking" });
+    }
+
+    // Reset the booking to available state instead of deleting
+    // This preserves the time slot configuration (discount, offer, etc.)
+    const result = await collections.updateOne(
+      { timeSlotId: timeSlotId },
+      {
+        $set: {
+          available: true,
+          updatedAt: new Date()
+        },
+        $unset: {
+          bookedBy: "",
+          paymentId: "",
+          number: "",
+          email: "",
+          info: "",
+          payed: "",
+          players: "",
+          cost: "",
+          bookingRef: "",
+          giftCardReference: ""
+        }
+      }
+    );
+
+    if (result.matchedCount === 0) {
       return res.status(404).json({ error: "Booking not found" });
     }
 
     res.json({
-      message: "Booking deleted successfully",
+      message: "Booking freed successfully",
       timeSlotId: timeSlotId,
       result
     });
-    
+
     // Broadcast the update to all connected clients (fire-and-forget)
     broadcast({ type: "timeUpdate", message: "Update" });
 
   } catch (error) {
-    console.error("Error deleting booking:", error);
+    console.error("Error freeing booking:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -4147,6 +4230,51 @@ router.post("/swish/callback", async (req, res) => {
           { $set: { available: false, payed: "Swish", updatedAt: new Date(), bookedAt: swedenTime } }
         );
         console.log("Booking update result:", result);
+
+        // ✅ CRITICAL CHECK: Verify bookings were actually updated
+        if (result.modifiedCount === 0) {
+          console.error('═══════════════════════════════════════════════');
+          console.error('🚨 CRITICAL: DATABASE UPDATE FAILED');
+          console.error('═══════════════════════════════════════════════');
+          console.error(`Payment ID: ${paymentId}`);
+          console.error(`Matched: ${result.matchedCount}, Modified: ${result.modifiedCount}`);
+          console.error(`Bookings found: ${bookings.length}`);
+          console.error('Swish payment received but database update failed!');
+          console.error('═══════════════════════════════════════════════');
+
+          // Send critical alert to admin
+          try {
+            await sendCriticalAlert({
+              type: 'DATABASE_UPDATE_FAILED',
+              severity: 'CRITICAL',
+              paymentId: paymentId,
+              amount: parseFloat(req.body.amount),
+              currency: 'SEK',
+              paymentMethod: 'Swish',
+              payerAlias: req.body.payerAlias,
+              customerEmail: bookings[0]?.email,
+              customerName: bookings[0]?.bookedBy,
+              timestamp: new Date(),
+              message: `Swish payment callback received, but database update failed. Modified count: ${result.modifiedCount}, Matched count: ${result.matchedCount}`,
+              instructions: [
+                '1. Check database connectivity and logs',
+                '2. Verify booking records exist with this paymentId',
+                '3. Manually update bookings to payed: "Swish"',
+                '4. Send confirmation email to customer manually',
+                '5. Investigate why updateMany returned 0 modified'
+              ],
+              webhook: req.body
+            });
+          } catch (alertError) {
+            console.error('Failed to send critical alert:', alertError);
+          }
+
+          // Return 200 OK to prevent Swish from retrying
+          return res.status(200).json({
+            status: 'OK',
+            warning: 'Payment received but database update failed - manual intervention required'
+          });
+        }
 
         // Send GA4 tracking for completed booking
         if (result.modifiedCount > 0) {
