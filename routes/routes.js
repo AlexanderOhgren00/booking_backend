@@ -77,6 +77,70 @@ const transporter = nodemailer.createTransport({
   }
 });
 
+// Separate transporter for Alexander's Gmail debug notifications
+const alexanderEmailTransporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: 'alexander.neurasite@gmail.com',
+    pass: process.env.ALEXANDER_EMAIL_PASSWORD
+  }
+});
+
+// Non-blocking debug email sender for missing bookings in Swish callback
+async function sendDebugEmailForMissingBooking(paymentId, callbackData) {
+  try {
+    const debugInfo = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #d32f2f;">⚠️ DEBUG ALERT: Missing Booking in Swish Callback</h2>
+        
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3 style="margin-top: 0;">Payment Information:</h3>
+          <p><strong>Payment ID:</strong> ${paymentId}</p>
+          <p><strong>Status:</strong> ${callbackData.status}</p>
+          <p><strong>Amount:</strong> ${callbackData.amount} SEK</p>
+          <p><strong>Date Paid:</strong> ${callbackData.datePaid || 'N/A'}</p>
+          <p><strong>Payer Alias:</strong> ${callbackData.payerAlias || 'N/A'}</p>
+          <p><strong>Message:</strong> ${callbackData.message || 'N/A'}</p>
+          <p><strong>Payment Reference:</strong> ${callbackData.paymentReference || 'N/A'}</p>
+          <p><strong>Payee Payment Reference:</strong> ${callbackData.payeePaymentReference || 'N/A'}</p>
+        </div>
+        
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3 style="margin-top: 0;">System Information:</h3>
+          <p><strong>Timestamp:</strong> ${new Date().toISOString()}</p>
+          <p><strong>Environment:</strong> ${process.env.NODE_ENV || 'production'}</p>
+          <p><strong>Server:</strong> ${process.env.SERVER_NAME || 'Unknown'}</p>
+        </div>
+        
+        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ff9800;">
+          <h3 style="margin-top: 0; color: #ff9800;">Action Required:</h3>
+          <p>A booking update was expected for this payment ID but no matching booking was found in the database.</p>
+          <p><strong>Possible causes:</strong></p>
+          <ul>
+            <li>Booking was already processed</li>
+            <li>Booking database query failed</li>
+            <li>Payment ID mismatch</li>
+            <li>Race condition in concurrent requests</li>
+          </ul>
+        </div>
+      </div>
+    `;
+
+    await alexanderEmailTransporter.sendMail({
+      from: 'alexander.neurasite@gmail.com',
+      to: 'alexander.neurasite@gmail.com',
+      subject: `🔴 DEBUG: Missing Booking for Swish Payment ${paymentId}`,
+      html: debugInfo
+    });
+
+    console.log(`✅ Debug email sent to alexander.neurasite@gmail.com for missing booking (Payment ID: ${paymentId})`);
+  } catch (emailError) {
+    console.error(`❌ Failed to send debug email for missing booking:`, emailError.message);
+    // Continue processing - don't throw, just log the error
+  }
+}
+
+
 function haltOnTimedout(req, res, next) {
   if (!req.timedout) next()
 }
@@ -194,8 +258,10 @@ async function cleanUpPaymentStates() {
             console.log(`⚠️ Booking found but not modified for timeSlotId: ${timeSlotId}`);
           } else {
             console.log(`✅ Successfully reset booking for timeSlotId: ${timeSlotId}`);
+            
+            // Terminate payment on DIBS provider
             try {
-              console.log(`Attempting to terminate payment ${paymentId} on payment provider`);
+              console.log(`Attempting to terminate payment ${paymentId} on DIBS payment provider`);
               const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
                 method: "PUT",
                 headers: {
@@ -205,12 +271,54 @@ async function cleanUpPaymentStates() {
               });
       
               if (response.ok) {
-                console.log(`✅ Payment ${paymentId} terminated successfully on payment provider`);
+                console.log(`✅ Payment ${paymentId} terminated successfully on DIBS payment provider`);
               } else {
-                console.error(`❌ Failed to terminate payment ${paymentId} on provider:`, await response.text());
+                console.error(`❌ Failed to terminate payment ${paymentId} on DIBS provider:`, await response.text());
               }
             } catch (error) {
-              console.error(`❌ Error terminating payment ${paymentId}:`, error);
+              console.error(`❌ Error terminating payment ${paymentId} on DIBS:`, error);
+            }
+
+            // Terminate payment on Swish provider
+            try {
+              console.log(`Attempting to terminate payment ${paymentId} on Swish provider`);
+              
+              // Load certificates for Swish API
+              const swishCert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
+              const swishKey = fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), 'utf8');
+              const swishCa = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), 'utf8');
+
+              const httpsAgent = new https.Agent({
+                cert: swishCert,
+                key: swishKey,
+                ca: swishCa,
+                minVersion: 'TLSv1.2',
+                rejectUnauthorized: false
+              });
+
+              const client = axios.create({ httpsAgent });
+
+              const cancelResponse = await client.patch(
+                `https://cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests/${paymentId}`,
+                [{
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "cancelled"
+                }],
+                {
+                  headers: {
+                    "Content-Type": "application/json-patch+json"
+                  }
+                }
+              );
+              
+              if (cancelResponse.status === 200 || cancelResponse.status === 204) {
+                console.log(`✅ Payment ${paymentId} terminated successfully on Swish provider`);
+              } else {
+                console.error(`❌ Failed to terminate payment ${paymentId} on Swish provider:`, cancelResponse.status, cancelResponse.data);
+              }
+            } catch (error) {
+              console.error(`❌ Error terminating payment ${paymentId} on Swish:`, error);
             }
           }
         } catch (updateError) {
@@ -726,6 +834,16 @@ router.post("/send-paylink", async (req, res) => {
           const collections = db.collection("bookings");
 
           const bookings = await collections.find({ paymentId: paymentId }).toArray();
+          
+          // If no bookings found, send debug email non-blocking
+          if (bookings.length === 0) {
+            setImmediate(() => {
+              sendDebugEmailForMissingBooking(paymentId, { ...event.data, eventType: 'eventCreated', orderData }).catch(err => {
+                console.error("Failed to send debug email:", err.message);
+              });
+            });
+          }
+          
           const originalTotalCost = bookings.reduce((sum, b) => sum + (b.cost || 0), 0);
           const amountPaid = orderData.amount.amount / 100;   // SEK
           const giftCardUsed = originalTotalCost - amountPaid;
@@ -3416,6 +3534,16 @@ router.post("/swish/callback", async (req, res) => {
         const paymentId = req.body.id;
 
         const bookings = await collections.find({ paymentId: paymentId }).toArray();
+        
+        // If no bookings found, send debug email non-blocking
+        if (bookings.length === 0) {
+          setImmediate(() => {
+            sendDebugEmailForMissingBooking(paymentId, req.body).catch(err => {
+              console.error("Failed to send debug email:", err.message);
+            });
+          });
+        }
+        
         const originalTotalCost = bookings.reduce((sum, b) => sum + (b.cost || 0), 0);
         const amountPaid = parseFloat(req.body.amount);     // SEK
         const giftCardUsed = originalTotalCost - amountPaid;
