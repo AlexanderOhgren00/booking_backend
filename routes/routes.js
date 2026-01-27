@@ -4085,22 +4085,18 @@ router.get("/search/bookings", async (req, res) => {
 
   try {
     const collections = db.collection("bookings");
-    let query = { available: false }; // Only search booked slots
 
-    // Check if searchTerm contains any numbers
-    if (/\d/.test(searchTerm)) {
-      // Search by paymentId
-      query.bookingRef = {
-        $regex: searchTerm,
-        $options: 'i'
-      };
-    } else {
-      // Search by bookedBy (name)
-      query.bookedBy = {
-        $regex: searchTerm,
-        $options: 'i'
-      };
-    }
+    // Search across multiple fields with case-insensitive matching
+    // This will match any of: name, email, phone number, or booking reference
+    const query = {
+      available: false, // Only search booked slots
+      $or: [
+        { bookedBy: { $regex: searchTerm, $options: 'i' } },
+        { email: { $regex: searchTerm, $options: 'i' } },
+        { number: { $regex: searchTerm, $options: 'i' } },
+        { bookingRef: { $regex: searchTerm, $options: 'i' } }
+      ]
+    };
 
     const result = await collections.find(query)
       .sort({ year: 1, month: 1, day: 1, time: 1 })
