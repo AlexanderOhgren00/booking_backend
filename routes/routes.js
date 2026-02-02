@@ -4005,11 +4005,12 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
     // For QR code payments, make an additional request to get payment status
     if (!isMobile && response.status === 201) {
       console.log('Making QR code status request...');
+      const qrToken = instructionUUID;
       try {
         const statusResponse = await client.post(
           `https://mpc.getswish.net/qrg-swish/api/v1/commerce`,
           {
-            token: response.headers.location,
+            token: qrToken,
             format: "svg",
             transparent: true,
           },
