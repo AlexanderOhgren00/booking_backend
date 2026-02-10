@@ -198,21 +198,6 @@ async function cleanUpPaymentStates() {
         console.log(`Processing timeSlotId: ${timeSlotId} for reset`);
 
         try {
-          // First, retrieve the current booking to preserve its discount value
-          console.log(`Retrieving current booking for timeSlotId: ${timeSlotId}`);
-          const currentBooking = await collections.findOne({
-            timeSlotId: timeSlotId,
-            available: "occupied"
-          });
-
-          let originalDiscount = 0; // Default discount value
-          if (currentBooking && currentBooking.discount !== undefined) {
-            originalDiscount = currentBooking.discount;
-            console.log(`Found original discount value: ${originalDiscount} for timeSlotId: ${timeSlotId}`);
-          } else {
-            console.log(`No original discount found for timeSlotId: ${timeSlotId}, using default: 0`);
-          }
-
           // Update the booking directly using timeSlotId
           console.log(`Attempting to reset booking with timeSlotId: ${timeSlotId}`);
           console.log(`Query conditions: { timeSlotId: "${timeSlotId}", available: "occupied" }`);
@@ -232,7 +217,7 @@ async function cleanUpPaymentStates() {
                 number: null,
                 email: null,
                 info: null,
-                discount: originalDiscount,
+                discount: 0,
                 bookingRef: null,
                 updatedAt: new Date()
               }
