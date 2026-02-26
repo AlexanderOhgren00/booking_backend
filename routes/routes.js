@@ -23,7 +23,7 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December"
 ];
 
-const paymentStates = {};
+const psCol = () => db.collection("paymentStates");
 
 // GA4 Tracking Function
 async function trackBookingCompleted() {
@@ -179,11 +179,13 @@ async function broadcast(data) {
 async function cleanUpPaymentStates() {
   const currentDate = new Date();
   console.log("===== Starting cleanUpPaymentStates =====");
-  console.log("Current paymentStates:", Object.keys(paymentStates).length > 0 ? Object.keys(paymentStates) : "No payment states");
+  const allStates = await psCol().find({}).toArray();
+  console.log("Current paymentStates:", allStates.length > 0 ? allStates.map(s => s.paymentId) : "No payment states");
   const collections = db.collection("bookings");
 
-  for (const paymentId in paymentStates) {
-    const paymentDate = new Date(paymentStates[paymentId].date);
+  for (const stateDoc of allStates) {
+    const paymentId = stateDoc.paymentId;
+    const paymentDate = new Date(stateDoc.date);
     const timeDifference = (currentDate - paymentDate) / 1000 / 60;
 
     console.log(`Checking payment ${paymentId}, age: ${timeDifference.toFixed(2)} minutes`);
@@ -191,7 +193,7 @@ async function cleanUpPaymentStates() {
     if (timeDifference > 30) {
       console.log(`Payment ${paymentId} expired (${timeDifference.toFixed(2)} minutes old)`);
 
-      for (const item of paymentStates[paymentId].data) {
+      for (const item of stateDoc.data) {
         // Create timeSlotId from booking data
         const timeSlotId = `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`;
 
@@ -313,9 +315,8 @@ async function cleanUpPaymentStates() {
       }
       // Remove from paymentStates
       console.log(`Removing payment ${paymentId} from paymentStates`);
-      delete paymentStates[paymentId];
+      await psCol().deleteOne({ paymentId });
       console.log(`✅ Removed payment ${paymentId} from paymentStates`);
-      console.log(`Current paymentStates after removal:`, Object.keys(paymentStates).length > 0 ? Object.keys(paymentStates) : "No payment states");
 
       // Broadcast update to all clients
       await broadcast({
@@ -363,7 +364,7 @@ router.post("/checkPaymentStates", async (req, res) => {
 
     // Now check if this paymentId is in the paymentStates
     const paymentId = booking.paymentId;
-    const paymentState = paymentStates[paymentId];
+    const paymentState = await psCol().findOne({ paymentId });
 
     if (paymentState) {
       console.log(`Active payment found for timeSlotId: ${timeSlotId}, paymentId: ${paymentId}`);
@@ -615,8 +616,10 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       console.error(`❌ Error associating paymentId with bookings:`, associateError);
     }
 
-    for (const existingPaymentId in paymentStates) {
-      const existingData = paymentStates[existingPaymentId].data;
+    const allStates = await psCol().find({}).toArray();
+    for (const stateDoc of allStates) {
+      const existingPaymentId = stateDoc.paymentId;
+      const existingData = stateDoc.data;
       console.log(existingData, "existingData");
       const hasConflict = body.combinedData.some(newItem =>
         existingData.some(existingItem =>
@@ -629,7 +632,7 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       );
       console.log(hasConflict, "hasConflict");
       if (hasConflict) {
-        delete paymentStates[existingPaymentId];
+        await psCol().deleteOne({ paymentId: existingPaymentId });
         console.log(`Removed conflicting payment state: ${existingPaymentId}`);
         // Load certificates
         const cert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
@@ -667,8 +670,12 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       }
     }
 
-    paymentStates[paymentId] = { date: currentDate, data: body.combinedData };
-    console.log("Payment states:", paymentStates);
+    await psCol().replaceOne(
+      { paymentId },
+      { paymentId, date: currentDate, data: body.combinedData },
+      { upsert: true }
+    );
+    console.log("Payment state saved to DB for paymentId:", paymentId);
 
     res.status(200).json({ message: "Payment initialized", paymentId, date: currentDate });
     
@@ -1078,10 +1085,8 @@ router.post("/send-paylink", async (req, res) => {
             // Continue processing even if email fails
           }
 
-          if (paymentStates[paymentId]) {
-            delete paymentStates[paymentId];
-            console.log("Payment terminated from paymentStates:", paymentId);
-          }
+          await psCol().deleteOne({ paymentId });
+          console.log("Payment terminated from paymentStates:", paymentId);
 
           break;
         default:
@@ -1233,7 +1238,7 @@ router.put("/v1/payments/:paymentId/terminate", async (req, res) => {
       },
     });
 
-    delete paymentStates[paymentId];
+    await psCol().deleteOne({ paymentId });
 
     const data = { message: "Payment terminated", paymentId };
     res.json(data);
@@ -3438,7 +3443,8 @@ router.post("/swish-payment-confirmation", async (req, res) => {
   }
 
   // If payment is still in paymentStates, it means it's still pending
-  if (paymentStates[paymentId]) {
+  const pendingState = await psCol().findOne({ paymentId });
+  if (pendingState) {
     return res.json({
       status: "NOT PAID"
     });
@@ -3767,10 +3773,8 @@ router.post("/swish/callback", async (req, res) => {
           // Continue processing even if email fails
         }
 
-        if (paymentStates[paymentId]) {
-          delete paymentStates[paymentId];
-          console.log("Payment terminated from paymentStates:", paymentId);
-        }
+        await psCol().deleteOne({ paymentId });
+        console.log("Payment terminated from paymentStates:", paymentId);
 
       } catch (dbError) {
         console.error('Error updating booking or sending email:', dbError, {
@@ -3818,10 +3822,8 @@ router.post("/swish/callback", async (req, res) => {
         }
 
         // Clean up payment states
-        if (paymentStates[paymentId]) {
-          delete paymentStates[paymentId];
-          console.log(`Removed failed payment ${paymentId} from paymentStates`);
-        }
+        await psCol().deleteOne({ paymentId });
+        console.log(`Removed failed payment ${paymentId} from paymentStates`);
 
         // Terminate the payment on Swish provider
         try {
@@ -4940,13 +4942,13 @@ router.post("/v1/giftcard-payments/:paymentId/initialize", async (req, res) => {
     console.log(`Initializing gift card payment: ${paymentId}`);
 
     // Store payment state for tracking
-    paymentStates[paymentId] = { 
-      date: currentDate, 
-      data: body.giftCardData,
-      type: "giftcard"
-    };
+    await psCol().replaceOne(
+      { paymentId },
+      { paymentId, date: currentDate, data: body.giftCardData, type: "giftcard" },
+      { upsert: true }
+    );
 
-    console.log("Gift card payment states:", Object.keys(paymentStates));
+    console.log("Gift card payment state saved to DB for paymentId:", paymentId);
 
     res.status(200).json({ 
       message: "Gift card payment initialized", 
@@ -5088,7 +5090,8 @@ router.post("/swish-giftcard-payment-confirmation", async (req, res) => {
     return res.status(400).json({ error: "Payment ID is required" });
   }
 
-  if (!paymentStates[paymentId]) {
+  const pendingGiftState = await psCol().findOne({ paymentId });
+  if (!pendingGiftState) {
     return res.json({
       status: "PAID"
     });
@@ -5247,10 +5250,8 @@ router.post("/swish/giftcard-callback", async (req, res) => {
         }
 
         // Remove from payment states
-        if (paymentStates[instructionId]) {
-          delete paymentStates[instructionId];
-          console.log("Gift card payment terminated from paymentStates:", instructionId);
-        }
+        await psCol().deleteOne({ paymentId: instructionId });
+        console.log("Gift card payment terminated from paymentStates:", instructionId);
 
       } catch (dbError) {
         console.error('Error updating gift card:', dbError);
@@ -5436,8 +5437,8 @@ router.post("/giftCardCreated", async (req, res) => {
 
         // Remove from payment states - use instructionId if available
         const giftCards = await collections.find({ netsPaymentId: paymentId }).toArray();
-        if (giftCards.length > 0 && giftCards[0].instructionId && paymentStates[giftCards[0].instructionId]) {
-          delete paymentStates[giftCards[0].instructionId];
+        if (giftCards.length > 0 && giftCards[0].instructionId) {
+          await psCol().deleteOne({ paymentId: giftCards[0].instructionId });
           console.log("Gift card payment terminated from paymentStates:", giftCards[0].instructionId);
         }
 
