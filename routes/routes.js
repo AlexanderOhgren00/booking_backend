@@ -627,11 +627,28 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
           existingItem.month === newItem.month &&
           existingItem.day === newItem.day &&
           existingItem.category === newItem.category &&
-          existingItem.time.time === newItem.time.time
+          existingItem.time === newItem.time
         )
       );
       console.log(hasConflict, "hasConflict");
       if (hasConflict) {
+        // Reset the orphaned booking slots back to available before deleting the payment state
+        try {
+          const conflictingSlotIds = existingData.map(item =>
+            `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`
+          );
+          const bookingCollection = db.collection("bookings");
+          await bookingCollection.updateMany(
+            { timeSlotId: { $in: conflictingSlotIds }, available: "occupied" },
+            { $set: { available: true, players: 0, payed: null, cost: 0,
+                      bookedBy: null, number: null, email: null, info: null,
+                      discount: 0, bookingRef: null, paymentId: null, updatedAt: new Date() } }
+          );
+          console.log(`Reset orphaned bookings for conflicting payment state: ${existingPaymentId}`);
+        } catch (resetError) {
+          console.error(`Error resetting orphaned bookings for ${existingPaymentId}:`, resetError);
+        }
+
         await psCol().deleteOne({ paymentId: existingPaymentId });
         console.log(`Removed conflicting payment state: ${existingPaymentId}`);
         // Load certificates
