@@ -4201,6 +4201,32 @@ router.get("/search/bookings", async (req, res) => {
   }
 });
 
+router.get("/search/giftcards", async (req, res) => {
+  const { searchTerm } = req.query;
+
+  if (!searchTerm) {
+    return res.status(400).json({ error: "Search term is required" });
+  }
+
+  try {
+    const query = {
+      $or: [
+        { reference: { $regex: searchTerm, $options: 'i' } },
+        { purchaserName: { $regex: searchTerm, $options: 'i' } },
+        { purchaserEmail: { $regex: searchTerm, $options: 'i' } },
+        { purchaserPhone: { $regex: searchTerm, $options: 'i' } }
+      ]
+    };
+
+    const result = await db.collection("giftcards").find(query).limit(20).toArray();
+
+    res.json({ results: result, count: result.length });
+  } catch (error) {
+    console.error('Gift card search error:', error);
+    res.status(500).json({ error: "Error performing gift card search" });
+  }
+});
+
 router.get("/stats/monthly-players/:year/:month", async (req, res) => {
   try {
     const year = parseInt(req.params.year);
