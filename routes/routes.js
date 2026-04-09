@@ -567,8 +567,9 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
             second: '2-digit'
           }).format(currentTime);
 
+          const { _id, ...bookingWithoutId } = bookingToBackup;
           await backupCollection.insertOne({
-            ...bookingToBackup,
+            ...bookingWithoutId,
             backupCreatedAt: swedenTime,
             backupSource: "paymentInitialize",
             paymentId: paymentId
