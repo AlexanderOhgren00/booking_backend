@@ -4185,14 +4185,25 @@ router.get("/search/bookings", async (req, res) => {
       ]
     };
 
-    const result = await collections.find(query)
-      .sort({ year: 1, month: 1, day: 1, time: 1 })
-      .limit(20)
-      .toArray();
+    const MONTH_ORDER = {
+      January: 1, February: 2, March: 3, April: 4, May: 5, June: 6,
+      July: 7, August: 8, September: 9, October: 10, November: 11, December: 12
+    };
+
+    const results = await collections.find(query).limit(100).toArray();
+
+    results.sort((a, b) => {
+      if (a.year !== b.year) return a.year - b.year;
+      const mA = MONTH_ORDER[a.month] || 0;
+      const mB = MONTH_ORDER[b.month] || 0;
+      if (mA !== mB) return mA - mB;
+      if (a.day !== b.day) return a.day - b.day;
+      return (a.time || '').localeCompare(b.time || '');
+    });
 
     res.json({
-      results: result,
-      count: result.length
+      results: results.slice(0, 20),
+      count: results.slice(0, 20).length
     });
 
   } catch (error) {
@@ -4218,7 +4229,7 @@ router.get("/search/giftcards", async (req, res) => {
       ]
     };
 
-    const result = await db.collection("giftcards").find(query).limit(20).toArray();
+    const result = await db.collection("giftcards").find(query).sort({ createdAt: -1 }).limit(20).toArray();
 
     res.json({ results: result, count: result.length });
   } catch (error) {
