@@ -3229,6 +3229,9 @@ router.patch("/checkout", async (req, res) => {
         { paymentId: incomingPaymentId },
         { available: { $ne: "occupied" } }
       ];
+    } else if (updateData.available === false && !isFromAdmin) {
+      // Invoice direct booking: only allow on free slots (not occupied, not already confirmed)
+      filter.available = { $nin: ["occupied", false] };
     }
 
     const result = await db.collection("bookings").updateOne(
@@ -3236,7 +3239,7 @@ router.patch("/checkout", async (req, res) => {
       { $set: { ...updateData, updatedAt: new Date() } }
     );
 
-    if (result.matchedCount === 0 && updateData.available === "occupied" && !isFromAdmin) {
+    if (result.matchedCount === 0 && (updateData.available === "occupied" || updateData.available === false) && !isFromAdmin) {
       return res.status(409).json({
         error: "Slot already taken by another payment",
         timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}`
