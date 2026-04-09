@@ -4132,6 +4132,42 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
   }
 });
 
+router.delete("/v1/payments/:paymentId/cancel", async (req, res) => {
+  const { paymentId } = req.params;
+  try {
+    const bookingCollection = db.collection("bookings");
+    await bookingCollection.updateMany(
+      { paymentId, available: "occupied" },
+      { $set: { available: true, players: 0, payed: null, cost: 0,
+                bookedBy: null, number: null, email: null, info: null,
+                discount: 0, bookingRef: null, paymentId: null, updatedAt: new Date() } }
+    );
+    await psCol().deleteOne({ paymentId });
+
+    // Cancel on Swish (fire-and-forget)
+    try {
+      const cert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
+      const key = fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), 'utf8');
+      const ca = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), 'utf8');
+      const httpsAgent = new https.Agent({ cert, key, ca, minVersion: 'TLSv1.2', rejectUnauthorized: false });
+      const client = axios.create({ httpsAgent });
+      await client.patch(
+        `https://cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests/${paymentId}`,
+        [{ op: "replace", path: "/status", value: "cancelled" }],
+        { headers: { "Content-Type": "application/json-patch+json" } }
+      );
+    } catch (swishError) {
+      console.error(`Error cancelling Swish payment ${paymentId}:`, swishError.message);
+    }
+
+    await broadcast({ type: "paymentCancelled", message: "Payment cancelled by user", data: { paymentId } });
+    res.json({ message: "Payment cancelled" });
+  } catch (error) {
+    console.error("Error cancelling payment:", error);
+    res.status(500).json({ error: "Failed to cancel payment" });
+  }
+});
+
 router.get("/search/bookings", async (req, res) => {
   const { searchTerm } = req.query;
 
