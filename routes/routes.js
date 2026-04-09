@@ -3865,9 +3865,9 @@ router.post("/swish/callback", async (req, res) => {
           parseResult: message.match(/([A-Z\s]+)\s+(\d+)\/(\w+)\s+(\d{2}:\d{2})/)
         });
       }
-    } else if (status === 'ERROR') {
+    } else if (status === 'DECLINED' || status === 'ERROR') {
       try {
-        console.log(`Swish payment failed: ${req.body.errorMessage} (${req.body.errorCode})`);
+        console.log(`Swish payment failed: ${status} - ${req.body.errorMessage} (${req.body.errorCode})`);
         const paymentId = req.body.id;
 
         // First, check what bookings exist with this paymentId
@@ -4060,23 +4060,14 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
         data: response.data,
         requestData: paymentData,
         headers: response.headers,
-        errorCode: response.data?.errorCode,
-        errorMessage: response.data?.errorMessage
+        errorCode: response.data?.[0]?.errorCode,
+        errorMessage: response.data?.[0]?.errorMessage
       });
-      const cancelResponse = await client.patch(
-        `https://cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests/${existingPaymentId}`,
-        [{
-          "op": "replace",
-          "path": "/status",
-          "value": "cancelled"
-        }],
-        {
-          headers: {
-            "Content-Type": "application/json-patch+json"
-          }
-        }
-      );
-      console.log(cancelResponse, "cancelResponse");
+      return res.status(422).json({
+        error: 'Swish validation error',
+        errorCode: response.data?.[0]?.errorCode,
+        details: response.data
+      });
     }
 
     // For desktop E-Commerce payments, Swish sends a push notification directly to the
