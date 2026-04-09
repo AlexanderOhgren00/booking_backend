@@ -9,8 +9,9 @@ import fs from 'fs';
 import https from 'https';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import axios from 'axios';  
+import axios from 'axios';
 import nodemailer from 'nodemailer';
+import { randomUUID } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -192,6 +193,11 @@ async function cleanUpPaymentStates() {
 
     if (timeDifference > 30) {
       console.log(`Payment ${paymentId} expired (${timeDifference.toFixed(2)} minutes old)`);
+
+      if (stateDoc.type === "giftcard") {
+        console.log(`Skipping cleanup for gift card payment ${paymentId} — no booking slot to release`);
+        continue;
+      }
 
       for (const item of stateDoc.data) {
         // Create timeSlotId from booking data
@@ -395,6 +401,7 @@ router.delete("/deleteBackup", async (req, res) => {
   const { timeSlotId } = req.body;
   const collections = db.collection("backup");
   const result = await collections.deleteOne({ timeSlotId });
+  await broadcast({ type: "backupDeleted", message: "Backup deleted", data: { timeSlotId } });
   res.json({ message: "Backup deleted", result });
 });
 
@@ -469,6 +476,7 @@ router.patch("/bulkBaseCost", async (req, res) => {
   const { baseCost } = req.body;
   const collections = db.collection("bookings");
   const result = await collections.updateMany({}, { $set: { baseCost } });
+  await broadcast({ type: "bulkBaseCostUpdated", message: "Base cost updated for all bookings", data: { baseCost } });
   res.json({ message: "Base cost updated", result });
 });
 
@@ -515,6 +523,7 @@ router.post("/addbackup", async (req, res) => {
     backupSource: "canceled",
     paymentId: backupData?.paymentId || null
   });
+  await broadcast({ type: "backupAdded", message: "Backup added", data: { backupCreatedAt: swedenTime } });
   res.json({ message: "Backup added", result });
 });
 
@@ -621,6 +630,7 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       const existingPaymentId = stateDoc.paymentId;
       const existingData = stateDoc.data;
       console.log(existingData, "existingData");
+      if (!Array.isArray(existingData)) continue; // gift cards store data as object, skip
       const hasConflict = body.combinedData.some(newItem =>
         existingData.some(existingItem =>
           existingItem.year === newItem.year &&
@@ -632,25 +642,12 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       );
       console.log(hasConflict, "hasConflict");
       if (hasConflict) {
-        // Reset the orphaned booking slots back to available before deleting the payment state
-        try {
-          const conflictingSlotIds = existingData.map(item =>
-            `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`
-          );
-          const bookingCollection = db.collection("bookings");
-          await bookingCollection.updateMany(
-            { timeSlotId: { $in: conflictingSlotIds }, available: "occupied" },
-            { $set: { available: true, players: 0, payed: null, cost: 0,
-                      bookedBy: null, number: null, email: null, info: null,
-                      discount: 0, bookingRef: null, paymentId: null, updatedAt: new Date() } }
-          );
-          console.log(`Reset orphaned bookings for conflicting payment state: ${existingPaymentId}`);
-        } catch (resetError) {
-          console.error(`Error resetting orphaned bookings for ${existingPaymentId}:`, resetError);
-        }
+        const conflictingSlotIds = existingData.map(item =>
+          `${item.year}-${item.month}-${item.day}-${item.category}-${item.time}`
+        );
 
-        await psCol().deleteOne({ paymentId: existingPaymentId });
-        console.log(`Removed conflicting payment state: ${existingPaymentId}`);
+        // Fix 2: Cancel the old Swish payment FIRST before resetting the booking,
+        // to close the race window where Swish could confirm a payment on an already-reset slot.
         // Load certificates
         const cert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
         const key = fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), 'utf8');
@@ -684,12 +681,36 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
         } catch (error) {
           console.error(`Error cancelling payment ${existingPaymentId}:`, error.message);
         }
+
+        await psCol().deleteOne({ paymentId: existingPaymentId });
+        console.log(`Removed conflicting payment state: ${existingPaymentId}`);
+
+        // Fix 1: Filter by paymentId: existingPaymentId (not available: "occupied") so we only
+        // reset slots that still belong to the OLD payment. If the slot was already reassigned
+        // to the new paymentId by the PATCH /checkout above, this won't touch it.
+        try {
+          const bookingCollection = db.collection("bookings");
+          await bookingCollection.updateMany(
+            { timeSlotId: { $in: conflictingSlotIds }, paymentId: existingPaymentId },
+            { $set: { available: true, players: 0, payed: null, cost: 0,
+                      bookedBy: null, number: null, email: null, info: null,
+                      discount: 0, bookingRef: null, paymentId: null, updatedAt: new Date() } }
+          );
+          console.log(`Reset orphaned bookings for conflicting payment state: ${existingPaymentId}`);
+        } catch (resetError) {
+          console.error(`Error resetting orphaned bookings for ${existingPaymentId}:`, resetError);
+        }
       }
     }
 
+    // Fix 7: Generate a callbackIdentifier per Swish API recommendation. This UUID is sent
+    // with the payment request and returned by Swish as a header in the callback, allowing
+    // the server to verify the callback is authentic.
+    const callbackIdentifier = randomUUID();
+
     await psCol().replaceOne(
       { paymentId },
-      { paymentId, date: currentDate, data: body.combinedData },
+      { paymentId, date: currentDate, data: body.combinedData, callbackIdentifier },
       { upsert: true }
     );
     console.log("Payment state saved to DB for paymentId:", paymentId);
@@ -1150,6 +1171,11 @@ router.post("/verify-booking-payment", async (req, res) => {
 
     if (allPaid) {
       console.log(`All bookings for paymentId ${paymentId} are marked as paid`);
+      await broadcast({
+        type: "bookingPaymentVerified",
+        message: "Booking payment verified as paid",
+        data: { paymentId, bookingCount: bookings.length, paymentMethod: bookings[0].payed }
+      });
       return res.json({
         status: "PAID",
         paymentMethod: bookings[0].payed,
@@ -3189,12 +3215,32 @@ router.get("/years", haltOnTimedout, async (req, res) => {
 router.patch("/checkout", async (req, res) => {
   const { year, month, day, category, time, ...updateData } = req.body;
   const isFromAdmin = req.query.fromAdmin === 'true' || req.headers['x-from-admin'] === 'true';
-  
+
   try {
+    const incomingPaymentId = updateData.paymentId;
+    // Fix 6: When marking a slot as occupied from a customer payment, only match if the slot
+    // is free (paymentId null) or already belongs to this paymentId. This prevents the last-write-wins
+    // race where two concurrent retry attempts silently overwrite each other.
+    let filter = { timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}` };
+    if (updateData.available === "occupied" && incomingPaymentId && !isFromAdmin) {
+      filter.$or = [
+        { paymentId: null },
+        { paymentId: incomingPaymentId },
+        { available: { $ne: "occupied" } }
+      ];
+    }
+
     const result = await db.collection("bookings").updateOne(
-      { timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}` },
+      filter,
       { $set: { ...updateData, updatedAt: new Date() } }
     );
+
+    if (result.matchedCount === 0 && updateData.available === "occupied" && !isFromAdmin) {
+      return res.status(409).json({
+        error: "Slot already taken by another payment",
+        timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}`
+      });
+    }
     
     // If this is a cancellation (available: true) from admin with action=cancel, update cancelled slot with discount from other same time slots
     if (isFromAdmin && req.query.action === 'cancel' && updateData.available === true) {
@@ -3536,13 +3582,32 @@ router.post("/swish/callback", async (req, res) => {
 
     console.log('Swish callback received:', req.body);
 
+    // Fix 7: Validate callbackIdentifier header — Swish returns the value we sent unchanged.
+    // This confirms the callback is from Swish and not a spoofed request.
+    const receivedCallbackId = req.headers['callbackidentifier'];
+    if (receivedCallbackId) {
+      const paymentId = req.body.id;
+      const storedState = await psCol().findOne({ paymentId });
+      if (storedState?.callbackIdentifier && storedState.callbackIdentifier !== receivedCallbackId) {
+        console.warn(`callbackIdentifier mismatch for paymentId ${paymentId}. Expected: ${storedState.callbackIdentifier}, got: ${receivedCallbackId}`);
+        return res.sendStatus(403);
+      }
+    }
+
     if (status === 'PAID') {
       try {
         const collections = db.collection("bookings");
         const paymentId = req.body.id;
 
         const bookings = await collections.find({ paymentId: paymentId }).toArray();
-        
+
+        // Fix 5: Idempotency — if this callback was already processed (e.g. Swish retry),
+        // return 200 immediately to avoid double emails and double gift card deductions.
+        if (bookings.length > 0 && bookings[0].payed === "Swish") {
+          console.log(`Swish callback already processed for paymentId: ${paymentId}, skipping.`);
+          return res.sendStatus(200);
+        }
+
         // If no bookings found, send debug email non-blocking
         if (bookings.length === 0) {
           setImmediate(() => {
@@ -3551,7 +3616,7 @@ router.post("/swish/callback", async (req, res) => {
             });
           });
         }
-        
+
         const originalTotalCost = bookings.reduce((sum, b) => sum + (b.cost || 0), 0);
         const amountPaid = parseFloat(req.body.amount);     // SEK
         const giftCardUsed = originalTotalCost - amountPaid;
@@ -3939,10 +4004,17 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
 
     const client = axios.create({ httpsAgent });
 
+    // Fix 7: Look up the callbackIdentifier stored during /initialize and include it in
+    // the payment request. Swish will return it unchanged as a header in the callback,
+    // letting us verify the callback is genuine.
+    const paymentState = await psCol().findOne({ paymentId: instructionUUID });
+    const callbackIdentifier = paymentState?.callbackIdentifier || randomUUID();
+
     // Base payment data
     let paymentData = {
       payeePaymentReference: instructionUUID,
       callbackUrl: 'https://mintbackend-0066444807ba.herokuapp.com/swish/callback',
+      callbackIdentifier: callbackIdentifier,
       payeeAlias: '1230047647',
       amount: amount,
       currency: 'SEK',
@@ -4006,41 +4078,15 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       console.log(cancelResponse, "cancelResponse");
     }
 
-    // For QR code payments, make an additional request to get payment status
+    // For desktop E-Commerce payments, Swish sends a push notification directly to the
+    // user's phone (payerAlias). No QR code needed — the frontend shows a waiting popup.
     if (!isMobile && response.status === 201) {
-      console.log('Making QR code status request...');
-      const qrToken = instructionUUID;
-      try {
-        const statusResponse = await client.post(
-          `https://mpc.getswish.net/qrg-swish/api/v1/commerce`,
-          {
-            token: qrToken,
-            format: "svg",
-            transparent: true,
-          },
-          {
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            validateStatus: false
-          }
-        );
-
-        console.log('QR code status response:', {
-          status: statusResponse.status,
-          data: statusResponse.data
-        });
-
-        return res.status(response.status).json({
-          status: response.status,
-          paymentRequestToken: response.headers.location,
-          instructionUUID,
-          paymentType: 'qr',
-          paymentStatus: statusResponse.data
-        });
-      } catch (statusError) {
-        console.error('Error fetching QR code status:', statusError);
-      }
+      return res.status(201).json({
+        status: 201,
+        paymentRequestToken: response.headers.location,
+        instructionUUID,
+        paymentType: 'ecommerce'
+      });
     }
 
     // For mobile payments, use PaymentRequestToken header; for desktop, use location header
@@ -4056,6 +4102,11 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
       headers: response.headers // Debug: log all headers
     });
 
+    await broadcast({
+      type: "swishPaymentCreated",
+      message: "Swish payment initiated",
+      data: { instructionUUID, paymentType: isMobile ? 'mobile' : 'qr' }
+    });
     res.status(response.status).json({
       status: response.status,
       paymentRequestToken: tokenValue,
@@ -4453,6 +4504,7 @@ router.post("/edit-confirmation", async (req, res) => {
       html: emailHtml
     });
 
+    await broadcast({ type: "editConfirmationSent", message: "Edit confirmation email sent successfully" });
     res.status(200).json({ message: 'Confirmation email sent successfully' });
   } catch (error) {
     console.error('Error sending confirmation email:', error);
@@ -4904,6 +4956,7 @@ router.post("/confirm-with-giftcard", async (req, res) => {
         console.error("Error sending confirmation email:", emailError);
       }
 
+      await broadcast({ type: "bookingConfirmedWithGiftcard", message: "Booking confirmed with gift card" });
       res.status(200).json({ message: "Booking confirmed successfully" });
 
   } catch (error) {
@@ -5109,6 +5162,7 @@ router.post("/swish-giftcard-payment-confirmation", async (req, res) => {
 
   const pendingGiftState = await psCol().findOne({ paymentId });
   if (!pendingGiftState) {
+    await broadcast({ type: "giftcardPaymentPaid", message: "Gift card Swish payment confirmed as paid", data: { paymentId } });
     return res.json({
       status: "PAID"
     });
@@ -5270,6 +5324,7 @@ router.post("/swish/giftcard-callback", async (req, res) => {
         await psCol().deleteOne({ paymentId: instructionId });
         console.log("Gift card payment terminated from paymentStates:", instructionId);
 
+        await broadcast({ type: "giftcardCallbackReceived", message: "Gift card Swish payment confirmed", data: { instructionId } });
       } catch (dbError) {
         console.error('Error updating gift card:', dbError);
       }
@@ -5464,6 +5519,7 @@ router.post("/giftCardCreated", async (req, res) => {
         console.log("Unhandled gift card event type:", event);
     }
 
+    await broadcast({ type: "giftcardCreated", message: "Gift card created via Nets webhook" });
     res.status(200).send("Gift card event received");
   } catch (error) {
     console.error("Error processing gift card webhook event:", error);
@@ -5524,7 +5580,8 @@ router.patch("/giftcard/update/:reference", async (req, res) => {
     }
 
     console.log(`Gift card ${reference} updated with Nets paymentId: ${netsPaymentId}`);
-    res.status(200).json({ 
+    await broadcast({ type: "giftcardUpdated", message: "Gift card updated", data: { reference, netsPaymentId } });
+    res.status(200).json({
       message: "Gift card updated successfully",
       reference: reference,
       netsPaymentId: netsPaymentId
@@ -5599,6 +5656,7 @@ router.patch('/notifications/:id/read', authenticateToken, async (req, res) => {
       );
     }
     
+    await broadcast({ type: "notificationRead", message: "Notification marked as read", data: { id, username } });
     res.json({ success: true });
   } catch (error) {
     console.error("Error marking notification as read:", error);
@@ -5633,6 +5691,7 @@ router.patch('/notifications/markall/read', authenticateToken, async (req, res) 
       );
     }
     
+    await broadcast({ type: "allNotificationsRead", message: "All notifications marked as read", data: { username, markedCount: unreadNotifications.length } });
     res.json({ success: true, markedCount: unreadNotifications.length });
   } catch (error) {
     console.error("Error marking all notifications as read:", error);
