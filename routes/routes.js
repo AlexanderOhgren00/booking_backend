@@ -4140,7 +4140,7 @@ router.delete("/v1/payments/:paymentId/cancel", async (req, res) => {
       { paymentId, available: "occupied" },
       { $set: { available: true, players: 0, payed: null, cost: 0,
                 bookedBy: null, number: null, email: null, info: null,
-                discount: 0, bookingRef: null, paymentId: null, updatedAt: new Date() } }
+                bookingRef: null, paymentId: null, updatedAt: new Date() } }
     );
     await psCol().deleteOne({ paymentId });
 
