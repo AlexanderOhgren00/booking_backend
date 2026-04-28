@@ -4212,6 +4212,53 @@ router.get("/search/bookings", async (req, res) => {
   }
 });
 
+router.get("/search/cancelledbookings", async (req, res) => {
+  const { searchTerm } = req.query;
+
+  if (!searchTerm) {
+    return res.status(400).json({ error: "Search term is required" });
+  }
+
+  try {
+    const backup = db.collection("backup");
+
+    const query = {
+      backupSource: "canceled",
+      $or: [
+        { bookedBy: { $regex: searchTerm, $options: 'i' } },
+        { email: { $regex: searchTerm, $options: 'i' } },
+        { number: { $regex: searchTerm, $options: 'i' } },
+        { bookingRef: { $regex: searchTerm, $options: 'i' } }
+      ]
+    };
+
+    const MONTH_ORDER = {
+      January: 1, February: 2, March: 3, April: 4, May: 5, June: 6,
+      July: 7, August: 8, September: 9, October: 10, November: 11, December: 12
+    };
+
+    const results = await backup.find(query).limit(100).toArray();
+
+    results.sort((a, b) => {
+      if (a.year !== b.year) return a.year - b.year;
+      const mA = MONTH_ORDER[a.month] || 0;
+      const mB = MONTH_ORDER[b.month] || 0;
+      if (mA !== mB) return mA - mB;
+      if (a.day !== b.day) return a.day - b.day;
+      return (a.time || '').localeCompare(b.time || '');
+    });
+
+    res.json({
+      results: results.slice(0, 20),
+      count: results.slice(0, 20).length
+    });
+
+  } catch (error) {
+    console.error('Cancelled bookings search error:', error);
+    res.status(500).json({ error: "Error performing search" });
+  }
+});
+
 router.get("/search/giftcards", async (req, res) => {
   const { searchTerm } = req.query;
 
