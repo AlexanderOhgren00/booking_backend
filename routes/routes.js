@@ -5642,6 +5642,29 @@ router.post("/giftCardCreated", async (req, res) => {
   }
 });
 
+// Gift card stats: sold (last 12 months) and expired (older than 12 months, unused balance)
+router.get("/giftcard-stats", async (req, res) => {
+  try {
+    const collections = db.collection("giftcards");
+
+    const now = new Date();
+    const oneYearAgo = new Date(now);
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    // createdAt is stored as "YYYY-MM-DD HH:MM:SS" — string comparison works for this format
+    const oneYearAgoStr = oneYearAgo.toISOString().slice(0, 19).replace('T', ' ');
+
+    const [sold, expired] = await Promise.all([
+      collections.countDocuments({ payed: { $ne: false }, createdAt: { $gte: oneYearAgoStr } }),
+      collections.countDocuments({ createdAt: { $lt: oneYearAgoStr }, totalAmount: { $gt: 0 } })
+    ]);
+
+    res.json({ sold, expired });
+  } catch (error) {
+    console.error("Error fetching gift card stats:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get all gift cards (for admin)
 router.get("/giftcards", async (req, res) => {
   try {
