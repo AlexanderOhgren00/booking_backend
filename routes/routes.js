@@ -26,6 +26,15 @@ const MONTHS = [
 
 const psCol = () => db.collection("paymentStates");
 
+async function getPaymentCancellationGuard(paymentId) {
+  const bookings = await db.collection("bookings").find({ paymentId }).toArray();
+  const hasConfirmedBooking = bookings.some(booking => booking.available === false);
+  return {
+    bookings,
+    hasConfirmedBooking
+  };
+}
+
 // GA4 Tracking Function
 async function trackBookingCompleted() {
   try {
@@ -196,6 +205,12 @@ async function cleanUpPaymentStates() {
 
       if (stateDoc.type === "giftcard") {
         console.log(`Skipping cleanup for gift card payment ${paymentId} — no booking slot to release`);
+        continue;
+      }
+
+      const { hasConfirmedBooking } = await getPaymentCancellationGuard(paymentId);
+      if (hasConfirmedBooking) {
+        console.log(`Skipping cleanup for payment ${paymentId} because at least one booking is already confirmed (available=false)`);
         continue;
       }
 
@@ -1274,6 +1289,15 @@ router.post("/v1/payments/:paymentId/charges", async (req, res) => {
 router.put("/v1/payments/:paymentId/terminate", async (req, res) => {
   try {
     const paymentId = req.params.paymentId;
+    const { hasConfirmedBooking } = await getPaymentCancellationGuard(paymentId);
+
+    if (hasConfirmedBooking) {
+      return res.status(409).json({
+        error: "Cannot terminate payment for a confirmed booking",
+        paymentId
+      });
+    }
+
     const response = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/terminate`, {
       method: "PUT",
       headers: {
@@ -3872,6 +3896,12 @@ router.post("/swish/callback", async (req, res) => {
       try {
         console.log(`Swish payment failed: ${status} - ${req.body.errorMessage} (${req.body.errorCode})`);
         const paymentId = req.body.id;
+        const { hasConfirmedBooking } = await getPaymentCancellationGuard(paymentId);
+
+        if (hasConfirmedBooking) {
+          console.log(`Skipping failed-payment cleanup for ${paymentId} because at least one booking is already confirmed (available=false)`);
+          return res.sendStatus(200);
+        }
 
         // First, check what bookings exist with this paymentId
         const collections = db.collection("bookings");
@@ -4130,6 +4160,15 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
 router.delete("/v1/payments/:paymentId/cancel", async (req, res) => {
   const { paymentId } = req.params;
   try {
+    const { hasConfirmedBooking } = await getPaymentCancellationGuard(paymentId);
+
+    if (hasConfirmedBooking) {
+      return res.status(409).json({
+        error: "Cannot cancel payment for a confirmed booking",
+        paymentId
+      });
+    }
+
     const bookingCollection = db.collection("bookings");
     await bookingCollection.updateMany(
       { paymentId, available: "occupied" },
