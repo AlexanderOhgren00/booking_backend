@@ -5315,16 +5315,21 @@ router.post("/swish-giftcard-payment-confirmation", async (req, res) => {
   }
 
   const pendingGiftState = await psCol().findOne({ paymentId });
-  if (!pendingGiftState) {
-    await broadcast({ type: "giftcardPaymentPaid", message: "Gift card Swish payment confirmed as paid", data: { paymentId } });
-    return res.json({
-      status: "PAID"
-    });
+  if (pendingGiftState) {
+    return res.json({ status: "NOT PAID" });
   }
 
-  res.json({
-    status: "NOT PAID"
-  });
+  // Entry gone from paymentStates — check the gift card to know why
+  const giftCard = await db.collection("giftcards").findOne({ paymentId });
+  if (giftCard?.payed === "Swish" || giftCard?.payed === true) {
+    await broadcast({ type: "giftcardPaymentPaid", message: "Gift card Swish payment confirmed as paid", data: { paymentId } });
+    return res.json({ status: "PAID" });
+  }
+  if (giftCard?.payed === "cancelled") {
+    return res.json({ status: "CANCELLED" });
+  }
+
+  res.json({ status: "NOT PAID" });
 });
 
 // Swish callback for gift cards
