@@ -488,7 +488,7 @@ async function cleanUpExpiredGiftCards() {
     }
 
     // Mark as cancelled in database
-    await collections.updateOne(
+    await db.collection("giftcards").updateOne(
       { paymentId: instructionId },
       { $set: { payed: "cancelled", cancelReason: "expired", cancelledAt: swedenTime, updatedAt: new Date() } }
     );
