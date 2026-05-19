@@ -352,6 +352,157 @@ async function cleanUpPaymentStates() {
 
 setInterval(cleanUpPaymentStates, 300 * 1000);
 
+async function sendDebugEmailForMissingGiftCard(instructionId, callbackData, backup) {
+  try {
+    const debugInfo = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #d32f2f;">⚠️ DEBUG ALERT: Missing Gift Card in Swish Callback</h2>
+
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3 style="margin-top: 0;">Payment Information:</h3>
+          <p><strong>Instruction ID:</strong> ${instructionId}</p>
+          <p><strong>Status:</strong> ${callbackData.status}</p>
+          <p><strong>Amount:</strong> ${callbackData.amount} SEK</p>
+          <p><strong>Date Paid:</strong> ${callbackData.datePaid || 'N/A'}</p>
+          <p><strong>Payer Alias:</strong> ${callbackData.payerAlias || 'N/A'}</p>
+          <p><strong>Message:</strong> ${callbackData.message || 'N/A'}</p>
+          <p><strong>Swish Payment ID:</strong> ${callbackData.id || 'N/A'}</p>
+          <p><strong>Payment Reference:</strong> ${callbackData.paymentReference || 'N/A'}</p>
+        </div>
+
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <h3 style="margin-top: 0;">Backup Data (if available):</h3>
+          <p><strong>Reference:</strong> ${backup?.reference || 'N/A'}</p>
+          <p><strong>Total Amount:</strong> ${backup?.totalAmount || 'N/A'} SEK</p>
+          <p><strong>Purchaser Email:</strong> ${backup?.purchaserEmail || 'N/A'}</p>
+          <p><strong>Recipient Name:</strong> ${backup?.recipientName || 'N/A'}</p>
+          <p><strong>Recipient Email:</strong> ${backup?.recipientEmail || 'N/A'}</p>
+        </div>
+
+        <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ff9800;">
+          <h3 style="margin-top: 0; color: #ff9800;">Action Required:</h3>
+          <p>A Swish gift card payment was confirmed but no matching gift card was found in the database. A recovery record has been created automatically.</p>
+          <p>Please verify the recovery record and manually send the gift card to the recipient if needed.</p>
+        </div>
+      </div>
+    `;
+
+    await alexanderEmailTransporter.sendMail({
+      from: 'alexander.neurasite@gmail.com',
+      to: 'alexander.neurasite@gmail.com',
+      subject: `🔴 DEBUG: Missing Gift Card for Swish Payment ${instructionId}`,
+      html: debugInfo
+    });
+
+    console.log(`✅ Debug email sent for missing gift card (instructionId: ${instructionId})`);
+  } catch (emailError) {
+    console.error(`❌ Failed to send debug email for missing gift card:`, emailError.message);
+  }
+}
+
+async function cleanUpExpiredGiftCards() {
+  const currentDate = new Date();
+  console.log("===== Starting cleanUpExpiredGiftCards =====");
+
+  const collections = db.collection("giftcards");
+  const unpaidGiftCards = await collections.find({ payed: false }).toArray();
+  console.log(`Found ${unpaidGiftCards.length} unpaid gift cards to check`);
+
+  for (const giftCard of unpaidGiftCards) {
+    const createdAt = new Date(giftCard.created || giftCard.createdAt);
+    if (isNaN(createdAt.getTime())) {
+      console.log(`Gift card ${giftCard.paymentId} has no valid created date, skipping`);
+      continue;
+    }
+
+    const ageMinutes = (currentDate - createdAt) / 1000 / 60;
+    if (ageMinutes < 30) {
+      console.log(`Gift card ${giftCard.paymentId} is ${ageMinutes.toFixed(2)} min old, skipping`);
+      continue;
+    }
+
+    console.log(`Gift card ${giftCard.paymentId} expired (${ageMinutes.toFixed(2)} min old) — cancelling`);
+
+    const instructionId = giftCard.paymentId;
+    const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Europe/Stockholm',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    }).format(currentDate);
+
+    // Cancel on Swish provider
+    try {
+      const swishCert = fs.readFileSync(join(__dirname, '../ssl/myCertificate.pem'), 'utf8');
+      const swishKey = fs.readFileSync(join(__dirname, '../ssl/PrivateKey.key'), 'utf8');
+      const swishCa = fs.readFileSync(join(__dirname, '../ssl/Swish_TLS_RootCA.pem'), 'utf8');
+
+      const httpsAgent = new https.Agent({
+        cert: swishCert,
+        key: swishKey,
+        ca: swishCa,
+        minVersion: 'TLSv1.2',
+        rejectUnauthorized: false
+      });
+
+      const client = axios.create({ httpsAgent });
+
+      const cancelResponse = await client.patch(
+        `https://cpc.getswish.net/swish-cpcapi/api/v1/paymentrequests/${instructionId}`,
+        [{ "op": "replace", "path": "/status", "value": "cancelled" }],
+        { headers: { "Content-Type": "application/json-patch+json" } }
+      );
+
+      if (cancelResponse.status === 200 || cancelResponse.status === 204) {
+        console.log(`✅ Gift card ${instructionId} cancelled on Swish`);
+      } else {
+        console.log(`Swish cancel response for ${instructionId}: ${cancelResponse.status}`);
+      }
+    } catch (swishError) {
+      console.error(`❌ Error cancelling gift card ${instructionId} on Swish:`, swishError.message);
+    }
+
+    // Terminate on Nets provider if netsPaymentId exists
+    if (giftCard.netsPaymentId) {
+      try {
+        const terminateResponse = await fetch(`https://api.dibspayment.eu/v1/payments/${giftCard.netsPaymentId}/terminate`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": key,
+          }
+        });
+
+        if (terminateResponse.ok) {
+          console.log(`✅ Gift card ${giftCard.netsPaymentId} terminated on Nets`);
+        } else {
+          console.log(`Nets terminate response for ${giftCard.netsPaymentId}: ${terminateResponse.status}`);
+        }
+      } catch (netsError) {
+        console.error(`❌ Error terminating gift card ${giftCard.netsPaymentId} on Nets:`, netsError.message);
+      }
+    }
+
+    // Mark as cancelled in database
+    await collections.updateOne(
+      { paymentId: instructionId },
+      { $set: { payed: "cancelled", cancelReason: "expired", cancelledAt: swedenTime, updatedAt: new Date() } }
+    );
+    console.log(`✅ Gift card ${instructionId} marked cancelled in database`);
+
+    // Clean up paymentStates and backup
+    await psCol().deleteOne({ paymentId: instructionId });
+    try {
+      await db.collection("giftcard-backup").deleteOne({ paymentId: instructionId });
+    } catch (backupError) {
+      console.error(`❌ Error deleting gift card backup for ${instructionId}:`, backupError);
+    }
+  }
+
+  console.log("===== Finished cleanUpExpiredGiftCards =====");
+}
+
+setInterval(cleanUpExpiredGiftCards, 300 * 1000);
+
 router.post("/checkPaymentStates", async (req, res) => {
   try {
     const { timeSlotId } = req.body;
@@ -5382,6 +5533,42 @@ router.post("/swish/giftcard-callback", async (req, res) => {
           matchedCount: result.matchedCount,
           modifiedCount: result.modifiedCount
         });
+
+        // Safety: if no gift card found, create a recovery record and alert
+        if (result.matchedCount === 0) {
+          const backup = await db.collection("giftcard-backup").findOne({ paymentId: instructionId });
+
+          const recoveryRecord = {
+            reference: backup?.reference || `GC-RECOVERY-${instructionId.substring(0, 6).toUpperCase()}`,
+            amount: parseFloat(amount),
+            totalAmount: parseFloat(amount),
+            quantity: 1,
+            paymentId: instructionId,
+            purchaserEmail: backup?.purchaserEmail || null,
+            purchaserPhone: payerAlias || null,
+            purchaserName: null,
+            recipientName: backup?.recipientName || null,
+            recipientEmail: backup?.recipientEmail || null,
+            message: message || null,
+            payed: true,
+            paymentMethod: "Swish",
+            paidAt: swedenTime,
+            swishPaymentId: id,
+            swishPaymentReference: paymentReference,
+            recovered: true,
+            created: new Date().toISOString(),
+            updatedAt: new Date()
+          };
+
+          await collections.insertOne(recoveryRecord);
+          console.log(`✅ Recovery gift card created for instructionId: ${instructionId}`);
+
+          setImmediate(() => {
+            sendDebugEmailForMissingGiftCard(instructionId, req.body, backup).catch(err => {
+              console.error("Failed to send debug email for missing gift card:", err.message);
+            });
+          });
+        }
 
         // Send gift card email to recipient
         try {
