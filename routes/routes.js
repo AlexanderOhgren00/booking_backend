@@ -6133,6 +6133,56 @@ router.post("/giftcard-backup", async (req, res) => {
   }
 });
 
+// User-initiated gift card cancel (Avbryt button)
+router.post("/giftcard-cancel", async (req, res) => {
+  try {
+    const { instructionId } = req.body;
+    if (!instructionId) {
+      return res.status(400).json({ error: "instructionId is required" });
+    }
+
+    const collections = db.collection("giftcards");
+    const giftCard = await collections.findOne({ paymentId: instructionId });
+
+    if (!giftCard) {
+      return res.status(200).json({ message: "Gift card not found, nothing to cancel" });
+    }
+
+    // Do not cancel if already paid
+    if (giftCard.payed === true || giftCard.payed === "Swish" || giftCard.payed === "Nets Easy") {
+      console.log(`Gift card ${instructionId} already paid — skipping user cancel`);
+      return res.status(200).json({ message: "Already paid", alreadyPaid: true });
+    }
+
+    const currentTime = new Date();
+    const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Europe/Stockholm',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    }).format(currentTime);
+
+    await collections.updateOne(
+      { paymentId: instructionId },
+      { $set: { payed: "cancelled", cancelReason: "user_cancelled", cancelledAt: swedenTime, updatedAt: new Date() } }
+    );
+    console.log(`Gift card ${instructionId} cancelled by user`);
+
+    await psCol().deleteOne({ paymentId: instructionId });
+
+    try {
+      const backupCollection = db.collection("giftcard-backup");
+      await backupCollection.deleteOne({ paymentId: instructionId });
+    } catch (backupError) {
+      console.error("Error deleting gift card backup on user cancel:", backupError);
+    }
+
+    res.status(200).json({ message: "Gift card cancelled", alreadyPaid: false });
+  } catch (error) {
+    console.error("Error cancelling gift card:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ===== NOTIFICATION ROUTES =====
 
 // Get notifications for specific user
