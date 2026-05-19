@@ -5616,6 +5616,45 @@ router.post("/swish/giftcard-callback", async (req, res) => {
       } catch (dbError) {
         console.error('Error updating gift card:', dbError);
       }
+    } else if (status === 'DECLINED' || status === 'ERROR' || status === 'CANCELLED') {
+      try {
+        const collections = db.collection("giftcards");
+        const instructionId = req.body.payeePaymentReference;
+
+        // Only cancel if not already paid
+        const giftCard = await collections.findOne({ paymentId: instructionId });
+        if (giftCard && giftCard.payed !== true && giftCard.payed !== "Swish" && giftCard.payed !== "Nets Easy") {
+          const currentTime = new Date();
+          const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+            timeZone: 'Europe/Stockholm',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit'
+          }).format(currentTime);
+
+          await collections.updateOne(
+            { paymentId: instructionId },
+            { $set: { payed: "cancelled", cancelReason: status, cancelledAt: swedenTime, updatedAt: new Date() } }
+          );
+          console.log(`Gift card ${instructionId} cancelled due to Swish status: ${status}`);
+
+          await psCol().deleteOne({ paymentId: instructionId });
+          console.log("Gift card payment terminated from paymentStates:", instructionId);
+
+          try {
+            const backupCollection = db.collection("giftcard-backup");
+            await backupCollection.deleteOne({ paymentId: instructionId });
+            console.log(`✅ Deleted gift card backup for instructionId: ${instructionId}`);
+          } catch (backupError) {
+            console.error("Error deleting gift card backup:", backupError);
+          }
+
+          await broadcast({ type: "giftcardCancelled", message: `Gift card Swish payment cancelled: ${status}`, data: { instructionId, status } });
+        } else {
+          console.log(`Gift card ${instructionId} already paid — skipping cancel for status: ${status}`);
+        }
+      } catch (dbError) {
+        console.error('Error cancelling gift card:', dbError);
+      }
     }
 
     // Always return 200 OK to Swish
@@ -5937,6 +5976,50 @@ router.post("/giftCardCreated", async (req, res) => {
         }
 
         break;
+
+      case "payment.cancel.created":
+        try {
+          const paymentId = event.data.paymentId;
+          const collections = db.collection("giftcards");
+
+          // Only cancel if not already paid
+          const giftCard = await collections.findOne({ netsPaymentId: paymentId });
+          if (giftCard && giftCard.payed !== true && giftCard.payed !== "Swish" && giftCard.payed !== "Nets Easy") {
+            const currentTime = new Date();
+            const swedenTime = new Intl.DateTimeFormat('sv-SE', {
+              timeZone: 'Europe/Stockholm',
+              year: 'numeric', month: '2-digit', day: '2-digit',
+              hour: '2-digit', minute: '2-digit', second: '2-digit'
+            }).format(currentTime);
+
+            await collections.updateOne(
+              { netsPaymentId: paymentId },
+              { $set: { payed: "cancelled", cancelReason: "payment.cancel.created", cancelledAt: swedenTime, updatedAt: new Date() } }
+            );
+            console.log(`Gift card cancelled via Nets webhook for netsPaymentId: ${paymentId}`);
+
+            if (giftCard.instructionId) {
+              await psCol().deleteOne({ paymentId: giftCard.instructionId });
+              console.log("Gift card payment terminated from paymentStates:", giftCard.instructionId);
+
+              try {
+                const backupCollection = db.collection("giftcard-backup");
+                await backupCollection.deleteOne({ paymentId: giftCard.instructionId });
+                console.log(`✅ Deleted gift card backup for instructionId: ${giftCard.instructionId}`);
+              } catch (backupError) {
+                console.error("Error deleting gift card backup:", backupError);
+              }
+            }
+
+            await broadcast({ type: "giftcardCancelled", message: "Gift card Nets payment cancelled", data: { paymentId } });
+          } else {
+            console.log(`Gift card with netsPaymentId ${paymentId} already paid — skipping cancel`);
+          }
+        } catch (cancelError) {
+          console.error("Error cancelling gift card via Nets webhook:", cancelError);
+        }
+        break;
+
       default:
         console.log("Unhandled gift card event type:", event);
     }
