@@ -5469,6 +5469,129 @@ router.post("/swish/giftcard-callback", async (req, res) => {
             });
 
             console.log(`Gift card email sent to ${giftCard.recipientEmail} for payment ${instructionId}`);
+
+            // Send purchase confirmation to purchaser
+            if (giftCard.purchaserEmail) {
+              const purchaseDate = new Date().toISOString().split('T')[0];
+              const tax = Math.round(giftCard.totalAmount * 0.20);
+              const purchaserEmailHtml = `
+                <div style="
+                    font-family: Arial, sans-serif;
+                    max-width: 600px;
+                    margin: 0 auto;
+                    padding: 60px 20px 40px 20px;
+                ">
+                    <div style="
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        text-align: center;
+                        margin-bottom: 20px;
+                    ">
+                        <h1 style="color: #333;">Din order är bekräftad</h1>
+                    </div>
+
+                    <div style="
+                        background-color: rgb(17, 21, 22);
+                        border-radius: 15px;
+                        overflow: hidden;
+                    ">
+                        <div style="
+                            padding: 30px 10px;
+                            border-bottom: 1px solid rgb(29, 29, 29);
+                        ">
+                            <h2 style="
+                                margin: 10px 0 5px 0;
+                                color: white;
+                            ">Kvitto - Orderbekräftelse</h2>
+                            <p style="
+                                margin: 0;
+                                color: rgb(160, 160, 160);
+                            ">Presentkortsnummer: ${giftCard.reference}</p>
+                            <p style="
+                                margin: 0;
+                                color: rgb(160, 160, 160);
+                            ">Köpdatum: ${purchaseDate}</p>
+                        </div>
+
+                        <div style="
+                            padding: 20px 10px;
+                            color: rgb(160, 160, 160);
+                        ">
+                            <p style="margin: 0;">Mint Escape Room AB | Org.nr: 559382-8444 44</p>
+                            <p style="margin: 0;">Vaksalagatan 31 A 753 31 Uppsala</p>
+                        </div>
+
+                        <div style="padding: 5px 10px;">
+                            <div style="
+                                display: flex;
+                                justify-content: space-between;
+                                align-items: center;
+                                margin: 10px 0;
+                                color: white;
+                            ">
+                                <p style="margin: 0;">
+                                    Presentkort
+                                    <span style="color: rgb(160, 160, 160);">
+                                        till ${giftCard.recipientName}
+                                    </span>
+                                </p>
+                                <p style="margin: 0;">SEK ${giftCard.totalAmount}</p>
+                            </div>
+                        </div>
+
+                        <div style="padding: 0 10px;">
+                            <div style="
+                                display: grid;
+                                grid-template-columns: auto auto;
+                                justify-content: space-between;
+                                padding: 15px 0;
+                                color: white;
+                                border-top: 1px solid rgb(29, 29, 29);
+                                gap: 200px;
+                            ">
+                                <p style="margin: 0;">Betalsätt</p>
+                                <p style="margin: 0;">Swish</p>
+                            </div>
+
+                            <div style="
+                                display: grid;
+                                grid-template-columns: auto auto;
+                                justify-content: space-between;
+                                padding: 15px 0;
+                                color: white;
+                                gap: 200px;
+                            ">
+                                <p style="margin: 0;">Moms</p>
+                                <p style="margin: 0;">SEK ${tax}</p>
+                            </div>
+
+                            <div style="
+                                display: grid;
+                                grid-template-columns: auto auto;
+                                justify-content: space-between;
+                                padding: 15px 0;
+                                color: white;
+                                border-top: 1px solid rgb(29, 29, 29);
+                                gap: 200px;
+                            ">
+                                <p style="margin: 0; font-weight: bold;">Totalt</p>
+                                <p style="margin: 0; font-weight: bold;">SEK ${giftCard.totalAmount}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+              `;
+
+              await transporter.sendMail({
+                from: process.env.EMAIL_USER,
+                to: giftCard.purchaserEmail,
+                subject: "Orderbekräftelse - Ditt presentkort har köpts",
+                html: purchaserEmailHtml
+              });
+
+              console.log(`Purchase confirmation sent to ${giftCard.purchaserEmail} for payment ${instructionId}`);
+            }
           }
         } catch (emailError) {
           console.error("Error sending gift card email:", emailError);
@@ -5477,6 +5600,17 @@ router.post("/swish/giftcard-callback", async (req, res) => {
         // Remove from payment states
         await psCol().deleteOne({ paymentId: instructionId });
         console.log("Gift card payment terminated from paymentStates:", instructionId);
+
+        // Delete gift card backup entry
+        try {
+          const backupCollection = db.collection("giftcard-backup");
+          const backupResult = await backupCollection.deleteOne({ paymentId: instructionId });
+          if (backupResult.deletedCount > 0) {
+            console.log(`✅ Deleted gift card backup for instructionId: ${instructionId}`);
+          }
+        } catch (backupError) {
+          console.error("Error deleting gift card backup:", backupError);
+        }
 
         await broadcast({ type: "giftcardCallbackReceived", message: "Gift card Swish payment confirmed", data: { instructionId } });
       } catch (dbError) {
@@ -5656,6 +5790,129 @@ router.post("/giftCardCreated", async (req, res) => {
             });
 
             console.log(`Gift card email sent to ${giftCard.recipientEmail} for payment ${paymentId}`);
+
+            // Send purchase confirmation to purchaser
+            if (giftCard.purchaserEmail) {
+              const purchaseDate = new Date().toISOString().split('T')[0];
+              const tax = Math.round(giftCard.totalAmount * 0.20);
+              const purchaserEmailHtml = `
+                <div style="
+                    font-family: Arial, sans-serif;
+                    max-width: 600px;
+                    margin: 0 auto;
+                    padding: 60px 20px 40px 20px;
+                ">
+                    <div style="
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        text-align: center;
+                        margin-bottom: 20px;
+                    ">
+                        <h1 style="color: #333;">Din order är bekräftad</h1>
+                    </div>
+
+                    <div style="
+                        background-color: rgb(17, 21, 22);
+                        border-radius: 15px;
+                        overflow: hidden;
+                    ">
+                        <div style="
+                            padding: 30px 10px;
+                            border-bottom: 1px solid rgb(29, 29, 29);
+                        ">
+                            <h2 style="
+                                margin: 10px 0 5px 0;
+                                color: white;
+                            ">Kvitto - Orderbekräftelse</h2>
+                            <p style="
+                                margin: 0;
+                                color: rgb(160, 160, 160);
+                            ">Presentkortsnummer: ${giftCard.reference}</p>
+                            <p style="
+                                margin: 0;
+                                color: rgb(160, 160, 160);
+                            ">Köpdatum: ${purchaseDate}</p>
+                        </div>
+
+                        <div style="
+                            padding: 20px 10px;
+                            color: rgb(160, 160, 160);
+                        ">
+                            <p style="margin: 0;">Mint Escape Room AB | Org.nr: 559382-8444 44</p>
+                            <p style="margin: 0;">Vaksalagatan 31 A 753 31 Uppsala</p>
+                        </div>
+
+                        <div style="padding: 5px 10px;">
+                            <div style="
+                                display: flex;
+                                justify-content: space-between;
+                                align-items: center;
+                                margin: 10px 0;
+                                color: white;
+                            ">
+                                <p style="margin: 0;">
+                                    Presentkort
+                                    <span style="color: rgb(160, 160, 160);">
+                                        till ${giftCard.recipientName}
+                                    </span>
+                                </p>
+                                <p style="margin: 0;">SEK ${giftCard.totalAmount}</p>
+                            </div>
+                        </div>
+
+                        <div style="padding: 0 10px;">
+                            <div style="
+                                display: grid;
+                                grid-template-columns: auto auto;
+                                justify-content: space-between;
+                                padding: 15px 0;
+                                color: white;
+                                border-top: 1px solid rgb(29, 29, 29);
+                                gap: 200px;
+                            ">
+                                <p style="margin: 0;">Betalsätt</p>
+                                <p style="margin: 0;">Nets Easy</p>
+                            </div>
+
+                            <div style="
+                                display: grid;
+                                grid-template-columns: auto auto;
+                                justify-content: space-between;
+                                padding: 15px 0;
+                                color: white;
+                                gap: 200px;
+                            ">
+                                <p style="margin: 0;">Moms</p>
+                                <p style="margin: 0;">SEK ${tax}</p>
+                            </div>
+
+                            <div style="
+                                display: grid;
+                                grid-template-columns: auto auto;
+                                justify-content: space-between;
+                                padding: 15px 0;
+                                color: white;
+                                border-top: 1px solid rgb(29, 29, 29);
+                                gap: 200px;
+                            ">
+                                <p style="margin: 0; font-weight: bold;">Totalt</p>
+                                <p style="margin: 0; font-weight: bold;">SEK ${giftCard.totalAmount}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+              `;
+
+              await transporter.sendMail({
+                from: process.env.EMAIL_USER,
+                to: giftCard.purchaserEmail,
+                subject: "Orderbekräftelse - Ditt presentkort har köpts",
+                html: purchaserEmailHtml
+              });
+
+              console.log(`Purchase confirmation sent to ${giftCard.purchaserEmail} for payment ${paymentId}`);
+            }
           }
         } catch (emailError) {
           console.error("Error sending gift card email:", emailError);
@@ -5666,6 +5923,17 @@ router.post("/giftCardCreated", async (req, res) => {
         if (giftCards.length > 0 && giftCards[0].instructionId) {
           await psCol().deleteOne({ paymentId: giftCards[0].instructionId });
           console.log("Gift card payment terminated from paymentStates:", giftCards[0].instructionId);
+
+          // Delete gift card backup entry
+          try {
+            const backupCollection = db.collection("giftcard-backup");
+            const backupResult = await backupCollection.deleteOne({ paymentId: giftCards[0].instructionId });
+            if (backupResult.deletedCount > 0) {
+              console.log(`✅ Deleted gift card backup for instructionId: ${giftCards[0].instructionId}`);
+            }
+          } catch (backupError) {
+            console.error("Error deleting gift card backup:", backupError);
+          }
         }
 
         break;
@@ -5766,6 +6034,18 @@ router.patch("/giftcard/update/:reference", async (req, res) => {
 
   } catch (error) {
     console.error("Error updating gift card:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Gift card backup - store pending gift card payment for recovery
+router.post("/giftcard-backup", async (req, res) => {
+  try {
+    const backupCollection = db.collection("giftcard-backup");
+    await backupCollection.insertOne({ ...req.body, createdAt: new Date() });
+    res.status(200).json({ message: "Gift card backup saved" });
+  } catch (error) {
+    console.error("Error saving gift card backup:", error);
     res.status(500).json({ error: error.message });
   }
 });
