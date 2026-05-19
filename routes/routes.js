@@ -404,8 +404,13 @@ async function cleanUpExpiredGiftCards() {
   const currentDate = new Date();
   console.log("===== Starting cleanUpExpiredGiftCards =====");
 
-  const collections = db.collection("giftcards");
-  const unpaidGiftCards = await collections.find({ payed: false }).toArray();
+  let unpaidGiftCards;
+  try {
+    unpaidGiftCards = await db.collection("giftcards").find({ payed: false }).toArray();
+  } catch (dbError) {
+    console.error("cleanUpExpiredGiftCards: DB unavailable, will retry next interval:", dbError.message);
+    return;
+  }
   console.log(`Found ${unpaidGiftCards.length} unpaid gift cards to check`);
 
   for (const giftCard of unpaidGiftCards) {
