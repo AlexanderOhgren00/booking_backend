@@ -6229,7 +6229,8 @@ router.post("/giftCardCreated", async (req, res) => {
   }
 });
 
-// Gift card stats: sold (last 12 months) and expired (older than 12 months, unused balance)
+// Gift card stats: sold (last 12 months), expired (older than 12 months, unused balance),
+// and used (paid gift cards with a reduced remaining balance).
 router.get("/giftcard-stats", async (req, res) => {
   try {
     const collections = db.collection("giftcards");
@@ -6240,12 +6241,40 @@ router.get("/giftcard-stats", async (req, res) => {
     // createdAt is stored as "YYYY-MM-DD HH:MM:SS" — string comparison works for this format
     const oneYearAgoStr = oneYearAgo.toISOString().slice(0, 19).replace('T', ' ');
 
-    const [sold, expired] = await Promise.all([
-      collections.countDocuments({ payed: { $ne: false }, createdAt: { $gte: oneYearAgoStr } }),
-      collections.countDocuments({ createdAt: { $lt: oneYearAgoStr }, totalAmount: { $gt: 0 } })
+    const [sold, expired, usedResult] = await Promise.all([
+      collections.countDocuments({ payed: { $in: [true, "Swish", "Nets Easy"] }, createdAt: { $gte: oneYearAgoStr } }),
+      collections.countDocuments({ createdAt: { $lt: oneYearAgoStr }, totalAmount: { $gt: 0 } }),
+      collections.aggregate([
+        { $match: { payed: { $nin: [false, "cancelled"] } } },
+        {
+          $addFields: {
+            remainingAmount: {
+              $convert: { input: "$totalAmount", to: "double", onError: null, onNull: null }
+            },
+            originalAmount: {
+              $multiply: [
+                { $convert: { input: "$amount", to: "double", onError: 0, onNull: 0 } },
+                { $convert: { input: { $ifNull: ["$quantity", 1] }, to: "double", onError: 1, onNull: 1 } }
+              ]
+            }
+          }
+        },
+        {
+          $match: {
+            $expr: {
+              $and: [
+                { $ne: ["$remainingAmount", null] },
+                { $gt: ["$originalAmount", 0] },
+                { $lt: ["$remainingAmount", "$originalAmount"] }
+              ]
+            }
+          }
+        },
+        { $count: "count" }
+      ]).toArray()
     ]);
 
-    res.json({ sold, expired });
+    res.json({ sold, expired, used: usedResult[0]?.count || 0 });
   } catch (error) {
     console.error("Error fetching gift card stats:", error);
     res.status(500).json({ error: error.message });
