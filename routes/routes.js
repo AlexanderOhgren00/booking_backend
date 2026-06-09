@@ -6557,9 +6557,9 @@ router.post("/checkBookingStatus", async (req, res) => {
 // Confirm booking from Senaste view
 router.post("/confirmBookingFromSenaste", async (req, res) => {
   try {
-    const { timeSlotId, bookingData } = req.body;
+    const { timeSlotId, bookingData, originalBookedAt, backupId } = req.body;
     const collections = db.collection("bookings");
-    
+
     // First, check if the timeslot exists and get its current status
     const existingBooking = await collections.findOne({ timeSlotId });
     
@@ -6603,7 +6603,10 @@ router.post("/confirmBookingFromSenaste", async (req, res) => {
           paymentId: bookingData.paymentId,
           offer: bookingData.offer,
           info: bookingData.info,
-          bookedAt: swedenTime,
+          // Retain the time the customer originally tried to book so the
+          // confirmed booking keeps its place in Senaste instead of jumping
+          // to "now". Fall back to current time only if none was provided.
+          bookedAt: originalBookedAt || existingBooking.bookedAt || swedenTime,
           updatedAt: new Date(),
           confirmedFromSenaste: true
         }
@@ -6613,11 +6616,26 @@ router.post("/confirmBookingFromSenaste", async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: "Booking not found for update" });
     }
-    
+
+    // Remove the backup record that was shown in Senaste so it no longer
+    // appears as a separate "occupied" backup entry once confirmed.
+    try {
+      const backupCollection = db.collection("backup");
+      if (backupId) {
+        await backupCollection.deleteOne({ _id: new ObjectId(backupId) });
+      } else {
+        await backupCollection.deleteMany({ timeSlotId, available: "occupied" });
+      }
+      await broadcast({ type: "backupDeleted", message: "Backup removed after confirm", data: { timeSlotId } });
+    } catch (backupCleanupError) {
+      console.error("Error removing backup after confirm:", backupCleanupError);
+      // Non-fatal: the booking is confirmed regardless of backup cleanup.
+    }
+
     if (result.modifiedCount === 0) {
       return res.status(400).json({ error: "No changes made to booking" });
     }
-    
+
     console.log(`Booking confirmed from Senaste: ${timeSlotId} by ${bookingData.bookedBy}`);
     
     res.json({ 
