@@ -6297,9 +6297,16 @@ router.get("/giftcards", async (req, res) => {
 // Read-only: used by the admin to decide which gift cards show a "view booking" button.
 router.get("/giftcards/used-references", async (req, res) => {
   try {
-    const references = await db
+    // Use aggregation ($group) instead of distinct — distinct is not part of
+    // the MongoDB Stable API v1 (apiStrict) this client is configured with.
+    const grouped = await db
       .collection("bookings")
-      .distinct("giftCardReference", { giftCardReference: { $nin: [null, ""] } });
+      .aggregate([
+        { $match: { giftCardReference: { $nin: [null, ""] } } },
+        { $group: { _id: "$giftCardReference" } }
+      ])
+      .toArray();
+    const references = grouped.map(g => g._id);
     res.json({ references });
   } catch (error) {
     console.error("Error fetching used gift card references:", error);
