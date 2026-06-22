@@ -6293,6 +6293,52 @@ router.get("/giftcards", async (req, res) => {
   }
 });
 
+// Get the set of gift card references that have been used on at least one booking.
+// Read-only: used by the admin to decide which gift cards show a "view booking" button.
+router.get("/giftcards/used-references", async (req, res) => {
+  try {
+    const references = await db
+      .collection("bookings")
+      .distinct("giftCardReference", { giftCardReference: { $nin: [null, ""] } });
+    res.json({ references });
+  } catch (error) {
+    console.error("Error fetching used gift card references:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all bookings that were paid (fully or partially) with a given gift card.
+// Read-only: used by the admin to view which booking a gift card was used on.
+router.get("/giftcard/:reference/bookings", async (req, res) => {
+  try {
+    const { reference } = req.params;
+
+    const MONTH_ORDER = {
+      January: 1, February: 2, March: 3, April: 4, May: 5, June: 6,
+      July: 7, August: 8, September: 9, October: 10, November: 11, December: 12
+    };
+
+    const bookings = await db
+      .collection("bookings")
+      .find({ giftCardReference: reference })
+      .toArray();
+
+    bookings.sort((a, b) => {
+      if (a.year !== b.year) return (a.year || 0) - (b.year || 0);
+      const mA = MONTH_ORDER[a.month] || 0;
+      const mB = MONTH_ORDER[b.month] || 0;
+      if (mA !== mB) return mA - mB;
+      if (a.day !== b.day) return (a.day || 0) - (b.day || 0);
+      return (a.time || '').localeCompare(b.time || '');
+    });
+
+    res.json({ results: bookings, count: bookings.length });
+  } catch (error) {
+    console.error("Error fetching bookings for gift card:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get gift card by reference
 router.get("/giftcard/:reference", async (req, res) => {
   try {
