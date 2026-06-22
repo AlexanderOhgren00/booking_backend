@@ -109,4 +109,24 @@ let db = client.db("Mintescaperoom");
 //run().catch(console.dir);
 //mongodb+srv://alexanderneurasite:vrLUEvVaSHgWkabl@cluster0.0zreakw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
 
+// Ensure the indexes that back the hot public read paths exist on every boot.
+// createIndex is idempotent: it is a no-op if the index already exists, so this
+// is safe to run on each deploy and does not change any query results — it only
+// guarantees the booking-slot query uses an index scan instead of a collection scan.
+//   - { year, month, day }  backs GET /bookings/:year/:month/:day  (booking grid)
+//   - { timeSlotId }        backs GET /booking/:timeSlotId          (checkout re-check)
+async function ensureIndexes() {
+  try {
+    const bookings = db.collection("bookings");
+    await bookings.createIndex({ year: 1, month: 1, day: 1 });
+    await bookings.createIndex({ timeSlotId: 1 });
+    console.log("Ensured booking read-path indexes (year/month/day, timeSlotId)");
+  } catch (err) {
+    // Never let index maintenance crash the server; queries still work without it.
+    console.error("Failed to ensure booking indexes:", err.message);
+  }
+}
+
+ensureIndexes();
+
 export default db;
