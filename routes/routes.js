@@ -12,6 +12,11 @@ import { dirname, join } from 'path';
 import axios from 'axios';
 import nodemailer from 'nodemailer';
 import { randomUUID } from 'crypto';
+import {
+  getCachedBookings,
+  setCachedBookings,
+  clearBookingsCache,
+} from "../bookingsCache.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -156,6 +161,12 @@ function haltOnTimedout(req, res, next) {
 }
 
 async function broadcast(data) {
+  // Any broadcast can signal a slot change (availability resets, payments,
+  // bulk updates, etc.). Clear the per-day cache so the next read re-queries
+  // the DB and never serves stale availability. Reads are the hot path;
+  // broadcasts happen on writes/events, so this is cheap and always correct.
+  clearBookingsCache();
+
   // Immediate WebSocket broadcast - never block critical flows
   try {
     wss.clients.forEach((client) => {
@@ -3726,11 +3737,20 @@ router.post("/swish-payment-confirmation", async (req, res) => {
 router.get("/bookings/:year/:month/:day", async (req, res) => {
   const { year, month, day } = req.params;
   try {
+    const cacheKey = `${year}-${month}-${day}`;
+
+    const cached = getCachedBookings(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
     const bookings = await db.collection("bookings").find({
       year: parseInt(year),
       month: month,
       day: parseInt(day)
     }).toArray();
+
+    setCachedBookings(cacheKey, bookings);
     res.json(bookings);
   } catch (error) {
     res.status(500).json({ error: error.message });
