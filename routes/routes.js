@@ -3275,9 +3275,11 @@ router.post("/validateDiscount", async (req, res) => {
 
     // Check minimum requirements
     if (discountDoc.minimumPlayers && players < discountDoc.minimumPlayers) {
-      return res.status(400).json({ 
-        valid: false, 
-        message: `This discount requires at least ${discountDoc.minimumPlayers} players` 
+      return res.status(400).json({
+        valid: false,
+        reason: "min_players",
+        minimumPlayers: discountDoc.minimumPlayers,
+        message: `This discount requires at least ${discountDoc.minimumPlayers} players`
       });
     }
 
