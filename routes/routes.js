@@ -253,6 +253,7 @@ async function cleanUpPaymentStates() {
                 info: null,
                 discount: 0,
                 bookingRef: null,
+                giftCardReference: null,
                 updatedAt: new Date()
               }
             }
@@ -4104,6 +4105,7 @@ router.post("/swish/callback", async (req, res) => {
                 info: null,
                 bookingRef: null,
                 paymentId: null, // Clear the paymentId AFTER we found the bookings
+                giftCardReference: null,
                 updatedAt: new Date()
               }
             }
