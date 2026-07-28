@@ -6422,6 +6422,51 @@ router.patch("/giftcard/update/:reference", async (req, res) => {
   }
 });
 
+// Edit gift card fields (admin)
+router.patch("/giftcard/edit/:reference", async (req, res) => {
+  try {
+    const { reference } = req.params;
+    const collections = db.collection("giftcards");
+
+    const allowedFields = [
+      "totalAmount", "purchaserName", "purchaserEmail",
+      "purchaserPhone", "deliveryDate", "message",
+      "payed", "paymentMethod"
+    ];
+
+    const updateFields = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updateFields[field] = req.body[field];
+      }
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
+
+    updateFields.updatedAt = new Date();
+
+    const result = await collections.updateOne(
+      { reference: reference },
+      { $set: updateFields }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "Gift card not found" });
+    }
+
+    const updatedGiftCard = await collections.findOne({ reference: reference });
+    console.log(`Gift card ${reference} edited by admin`);
+    await broadcast({ type: "giftcardEdited", message: "Gift card edited", data: { reference } });
+    res.status(200).json(updatedGiftCard);
+
+  } catch (error) {
+    console.error("Error editing gift card:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Gift card backup - store pending gift card payment for recovery
 router.post("/giftcard-backup", async (req, res) => {
   try {
