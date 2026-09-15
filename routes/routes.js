@@ -29,6 +29,28 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December"
 ];
 
+function getBookingWeekday({ year, month, day } = {}) {
+  const numericYear = Number(year);
+  const numericDay = Number(day);
+  const numericMonth = typeof month === "string" && !/^\d+$/.test(month)
+    ? MONTHS.indexOf(month)
+    : Number(month) - 1;
+
+  if (!Number.isInteger(numericYear) || !Number.isInteger(numericMonth) ||
+      !Number.isInteger(numericDay) || numericMonth < 0 || numericMonth > 11) {
+    return null;
+  }
+
+  // UTC keeps a date-only booking from shifting weekday with the server timezone.
+  const date = new Date(Date.UTC(numericYear, numericMonth, numericDay));
+  if (date.getUTCFullYear() !== numericYear || date.getUTCMonth() !== numericMonth ||
+      date.getUTCDate() !== numericDay) {
+    return null;
+  }
+
+  return date.getUTCDay();
+}
+
 const psCol = () => db.collection("paymentStates");
 
 async function getPaymentCancellationGuard(paymentId) {
@@ -3149,8 +3171,11 @@ router.post("/createDiscount", async (req, res) => {
     expiryDate, 
     isActive, 
     minimumPlayers, 
+    maximumPlayers,
     minimumAmount, 
-    applicableCategories 
+    applicableCategories,
+    allowedWeekdays,
+    validationScope
   } = req.body;
 
   if (!code || !discountType || amount === undefined || amount === null) {
@@ -3163,6 +3188,26 @@ router.post("/createDiscount", async (req, res) => {
 
   if (!['infinite', 'single_use'].includes(usageType || 'infinite')) {
     return res.status(400).json({ error: "Invalid usage type" });
+  }
+
+  if (validationScope && !['aggregate', 'per_booking'].includes(validationScope)) {
+    return res.status(400).json({ error: "Invalid validation scope" });
+  }
+
+  if (allowedWeekdays != null && !Array.isArray(allowedWeekdays)) {
+    return res.status(400).json({ error: "Allowed weekdays must contain numbers from 0 to 6" });
+  }
+
+  const normalizedAllowedWeekdays = allowedWeekdays == null
+    ? []
+    : [...new Set(allowedWeekdays.map(Number))];
+
+  if (normalizedAllowedWeekdays.some(day => !Number.isInteger(day) || day < 0 || day > 6)) {
+    return res.status(400).json({ error: "Allowed weekdays must contain numbers from 0 to 6" });
+  }
+
+  if (minimumPlayers && maximumPlayers && Number(minimumPlayers) > Number(maximumPlayers)) {
+    return res.status(400).json({ error: "Minimum players cannot exceed maximum players" });
   }
 
   try {
@@ -3185,8 +3230,11 @@ router.post("/createDiscount", async (req, res) => {
       expiryDate: expiryDate ? new Date(expiryDate) : null,
       isActive: isActive !== false,
       minimumPlayers: minimumPlayers ? Number(minimumPlayers) : null,
+      maximumPlayers: maximumPlayers ? Number(maximumPlayers) : null,
       minimumAmount: minimumAmount ? Number(minimumAmount) : null,
       applicableCategories: applicableCategories || [],
+      allowedWeekdays: normalizedAllowedWeekdays,
+      validationScope: validationScope || 'aggregate',
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -3226,7 +3274,7 @@ router.post("/discounts", async (req, res) => {
 
 // New enhanced discount validation endpoint
 router.post("/validateDiscount", async (req, res) => {
-  const { code, players, category, totalAmount, bookingId } = req.body;
+  const { code, players, category, totalAmount, bookingId, bookings } = req.body;
 
   if (!code) {
     return res.status(400).json({ error: "Discount code is required" });
@@ -3274,14 +3322,94 @@ router.post("/validateDiscount", async (req, res) => {
       });
     }
 
-    // Check minimum requirements
-    if (discountDoc.minimumPlayers && players < discountDoc.minimumPlayers) {
-      return res.status(400).json({
-        valid: false,
-        reason: "min_players",
-        minimumPlayers: discountDoc.minimumPlayers,
-        message: `This discount requires at least ${discountDoc.minimumPlayers} players`
+    const bookingItems = Array.isArray(bookings) ? bookings : [];
+    const validatePerBooking = discountDoc.validationScope === 'per_booking';
+    const hasWeekdayRestriction = Array.isArray(discountDoc.allowedWeekdays) &&
+      discountDoc.allowedWeekdays.length > 0;
+
+    // Legacy discounts continue using the original aggregate player validation.
+    // Only explicitly scoped discounts validate every selected game separately.
+    if (validatePerBooking) {
+      if (bookingItems.length === 0) {
+        return res.status(400).json({
+          valid: false,
+          reason: "booking_details_required",
+          message: "Booking details are required for this discount code"
+        });
+      }
+
+      if (bookingItems.some(item => !Number.isFinite(Number(item.players)))) {
+        return res.status(400).json({
+          valid: false,
+          reason: "booking_details_required",
+          message: "A valid player count is required for every selected game"
+        });
+      }
+
+      const belowMinimum = discountDoc.minimumPlayers && bookingItems.find(item =>
+        Number(item.players) < discountDoc.minimumPlayers
+      );
+      if (belowMinimum) {
+        return res.status(400).json({
+          valid: false,
+          reason: "min_players",
+          minimumPlayers: discountDoc.minimumPlayers,
+          message: `This discount requires at least ${discountDoc.minimumPlayers} players per game`
+        });
+      }
+
+      const aboveMaximum = discountDoc.maximumPlayers && bookingItems.find(item =>
+        Number(item.players) > discountDoc.maximumPlayers
+      );
+      if (aboveMaximum) {
+        return res.status(400).json({
+          valid: false,
+          reason: "max_players",
+          maximumPlayers: discountDoc.maximumPlayers,
+          message: `This discount allows at most ${discountDoc.maximumPlayers} players per game`
+        });
+      }
+    } else {
+      if (discountDoc.minimumPlayers && players < discountDoc.minimumPlayers) {
+        return res.status(400).json({
+          valid: false,
+          reason: "min_players",
+          minimumPlayers: discountDoc.minimumPlayers,
+          message: `This discount requires at least ${discountDoc.minimumPlayers} players`
+        });
+      }
+
+      if (discountDoc.maximumPlayers && players > discountDoc.maximumPlayers) {
+        return res.status(400).json({
+          valid: false,
+          reason: "max_players",
+          maximumPlayers: discountDoc.maximumPlayers,
+          message: `This discount allows at most ${discountDoc.maximumPlayers} players`
+        });
+      }
+    }
+
+    if (hasWeekdayRestriction) {
+      if (bookingItems.length === 0) {
+        return res.status(400).json({
+          valid: false,
+          reason: "booking_details_required",
+          message: "Booking dates are required for this discount code"
+        });
+      }
+
+      const invalidDate = bookingItems.find(item => {
+        const weekday = getBookingWeekday(item);
+        return weekday === null || !discountDoc.allowedWeekdays.includes(weekday);
       });
+      if (invalidDate) {
+        return res.status(400).json({
+          valid: false,
+          reason: "weekday",
+          allowedWeekdays: discountDoc.allowedWeekdays,
+          message: "This discount is not valid for the selected weekday"
+        });
+      }
     }
 
     if (discountDoc.minimumAmount && totalAmount < discountDoc.minimumAmount) {
@@ -3291,8 +3419,14 @@ router.post("/validateDiscount", async (req, res) => {
       });
     }
 
-    // Check applicable categories
-    if (discountDoc.applicableCategories.length > 0 && !discountDoc.applicableCategories.includes(category)) {
+    // Keep the original single-category behavior for legacy discounts. Discounts
+    // explicitly scoped per game must allow every selected game's category.
+    const hasInvalidCategory = Array.isArray(discountDoc.applicableCategories) &&
+      discountDoc.applicableCategories.length > 0 &&
+      (validatePerBooking
+        ? bookingItems.some(item => !discountDoc.applicableCategories.includes(item.category))
+        : !discountDoc.applicableCategories.includes(category));
+    if (hasInvalidCategory) {
       return res.status(400).json({ 
         valid: false, 
         message: "This discount is not applicable to the selected room category" 

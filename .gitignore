@@ -2,3 +2,11 @@
 config/
 *.config
 backend/ssl/*
+
+# Environment / secrets
+.env
+.env.*
+
+# Local one-off diagnostic scripts (not for deployment)
+lookupPayment.mjs
+resendGiftcardEmail.mjs
