@@ -1187,7 +1187,15 @@ router.post("/send-paylink", async (req, res) => {
               const email = bookings[0].email;
               const bookingRef = bookings[0].bookingRef;
               const bookingDate = new Date().toISOString().split('T')[0];
-              const totalCost = bookings.reduce((sum, booking) => sum + (booking.cost || 0), 0);
+              const subtotal = bookings.reduce((sum, booking) => sum + (booking.cost || 0), 0);
+              // Total-level discounts leave each booking's cost unchanged. Use
+              // the provider-confirmed amount for the receipt and show the
+              // difference as a separate discount row.
+              const totalCost = amountPaid;
+              const receiptDiscount = Math.max(0, subtotal - totalCost);
+              const receiptDiscountLabel = bookings.some(booking => booking.giftCardReference)
+                ? "Presentkort"
+                : "Rabatt";
               const tax = Math.round(totalCost * 0.20);
 
               // Prepare items for the email
@@ -1268,6 +1276,18 @@ router.post("/send-paylink", async (req, res) => {
                                       <p style="margin: 0;">SEK ${item.cost}</p>
                                   </div>
                               `).join('')}
+                              ${receiptDiscount > 0 ? `
+                                  <div style="
+                                      display: flex;
+                                      justify-content: space-between;
+                                      align-items: center;
+                                      margin: 10px 0;
+                                      color: white;
+                                  ">
+                                      <p style="margin: 0;">${receiptDiscountLabel}</p>
+                                      <p style="margin: 0;">-SEK ${receiptDiscount}</p>
+                                  </div>
+                              ` : ''}
                           </div>
 
                           <div style="padding: 0 10px;">
@@ -4054,7 +4074,15 @@ router.post("/swish/callback", async (req, res) => {
             const email = bookings[0].email;
             const bookingRef = bookings[0].bookingRef;
             const bookingDate = new Date().toISOString().split('T')[0];
-            const totalCost = bookings.reduce((sum, booking) => sum + (booking.cost || 0), 0);
+            const subtotal = bookings.reduce((sum, booking) => sum + (booking.cost || 0), 0);
+            // Total-level discounts leave each booking's cost unchanged. Use
+            // the confirmed Swish amount for the receipt and show the
+            // difference as a separate discount row.
+            const totalCost = amountPaid;
+            const receiptDiscount = Math.max(0, subtotal - totalCost);
+            const receiptDiscountLabel = bookings.some(booking => booking.giftCardReference)
+              ? "Presentkort"
+              : "Rabatt";
             const tax = Math.round(totalCost * 0.20);
 
             // Prepare items for the email
@@ -4135,6 +4163,18 @@ router.post("/swish/callback", async (req, res) => {
                                     <p style="margin: 0;">SEK ${item.cost}</p>
                                 </div>
                             `).join('')}
+                            ${receiptDiscount > 0 ? `
+                                <div style="
+                                    display: flex;
+                                    justify-content: space-between;
+                                    align-items: center;
+                                    margin: 10px 0;
+                                    color: white;
+                                ">
+                                    <p style="margin: 0;">${receiptDiscountLabel}</p>
+                                    <p style="margin: 0;">-SEK ${receiptDiscount}</p>
+                                </div>
+                            ` : ''}
                         </div>
 
                         <div style="padding: 0 10px;">
