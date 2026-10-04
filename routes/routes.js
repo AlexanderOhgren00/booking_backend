@@ -12,6 +12,7 @@ import { dirname, join } from 'path';
 import axios from 'axios';
 import nodemailer from 'nodemailer';
 import { randomUUID } from 'crypto';
+import { holdDiscount, getPaymentDiscount, releaseDiscount, paidBookingUpdates, serializePaymentCallback } from "../bookingPricing.js";
 import {
   getCachedBookings,
   setCachedBookings,
@@ -52,6 +53,14 @@ function getBookingWeekday({ year, month, day } = {}) {
 }
 
 const psCol = () => db.collection("paymentStates");
+
+async function safelyReleaseDiscount(paymentId, completed = false, discountDoc = null) {
+  try {
+    await releaseDiscount(db, paymentId, completed, discountDoc);
+  } catch (error) {
+    console.error(`Error releasing discount for payment ${paymentId}:`, error);
+  }
+}
 
 async function getPaymentCancellationGuard(paymentId) {
   const bookings = await db.collection("bookings").find({ paymentId }).toArray();
@@ -261,6 +270,7 @@ async function cleanUpPaymentStates() {
           const updateResult = await collections.updateOne(
             {
               timeSlotId: timeSlotId,
+              paymentId: paymentId,
               available: "occupied"
             },
             {
@@ -269,6 +279,9 @@ async function cleanUpPaymentStates() {
                 players: 0,
                 payed: null,
                 cost: 0,
+                originalCost: null,
+                discountCode: null,
+                paymentId: null,
                 bookedBy: null,
                 number: null,
                 email: null,
@@ -369,6 +382,7 @@ async function cleanUpPaymentStates() {
         }
       }
       // Remove from paymentStates
+      await safelyReleaseDiscount(paymentId);
       console.log(`Removing payment ${paymentId} from paymentStates`);
       await psCol().deleteOne({ paymentId });
       console.log(`✅ Removed payment ${paymentId} from paymentStates`);
@@ -738,12 +752,12 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
     const currentDate = new Date();
     const body = req.body
     const { discountApplied } = req.body;
+    let appliedDiscountCode = null;
 
     // Add bookings to backup collection before processing
     try {
       const collections = db.collection("bookings");
       const backupCollection = db.collection("backup");
-      const discountCollection = db.collection("discounts");
 
       console.log(`Creating backup for ${body.combinedData.length} booking items for paymentId: ${paymentId}`);
 
@@ -795,12 +809,10 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
         if (paymentId) {
           console.log(`Updating discount ${discountApplied} with usedBy: ${paymentId}`);
           
-          const discountUpdateResult = await discountCollection.updateOne(
-            { key: discountApplied },
-            { $set: { usedBy: paymentId } }
-          );
+          const discountUpdateResult = await holdDiscount(db, discountApplied, paymentId);
           
           if (discountUpdateResult.matchedCount > 0) {
+            appliedDiscountCode = discountApplied;
             console.log(`✅ Successfully updated discount ${discountApplied} with payment ID ${paymentId}`);
           } else {
             console.log(`⚠️ No discount found with key: ${discountApplied}`);
@@ -900,9 +912,11 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
             { timeSlotId: { $in: conflictingSlotIds }, paymentId: existingPaymentId },
             { $set: { available: true, players: 0, payed: null, cost: 0,
                       bookedBy: null, number: null, email: null, info: null,
-                      discount: 0, bookingRef: null, paymentId: null, updatedAt: new Date() } }
+                      discount: 0, bookingRef: null, paymentId: null, giftCardReference: null,
+                      originalCost: null, discountCode: null, updatedAt: new Date() } }
           );
           console.log(`Reset orphaned bookings for conflicting payment state: ${existingPaymentId}`);
+          await safelyReleaseDiscount(existingPaymentId);
         } catch (resetError) {
           console.error(`Error resetting orphaned bookings for ${existingPaymentId}:`, resetError);
         }
@@ -916,7 +930,8 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
 
     await psCol().replaceOne(
       { paymentId },
-      { paymentId, date: currentDate, data: body.combinedData, callbackIdentifier },
+      { paymentId, date: currentDate, data: body.combinedData, callbackIdentifier,
+        discountCode: appliedDiscountCode },
       { upsert: true }
     );
     console.log("Payment state saved to DB for paymentId:", paymentId);
@@ -1022,7 +1037,7 @@ router.post("/send-paylink", async (req, res) => {
   }
 });
 
-  router.post("/eventCreated", async (req, res) => {
+  router.post("/eventCreated", serializePaymentCallback(async (req, res) => {
     try {
       const event = req.body;
 
@@ -1049,6 +1064,17 @@ router.post("/send-paylink", async (req, res) => {
           console.log("PAYMENT ID:", paymentId);
           const amount = orderData.amount.amount;
 
+          const collections = db.collection("bookings");
+          const bookings = await collections.find({ paymentId: paymentId }).toArray();
+          // Guard before charging as well as before gift-card/discount updates.
+          if (bookings.length > 0 && bookings.every(booking => booking.payed === "Nets Easy")) {
+            return res.sendStatus(200);
+          }
+          const amountPaid = orderData.amount.amount / 100; // SEK
+          const paymentDiscount = await getPaymentDiscount(db, paymentId, bookings);
+          // Validate allocation before any payment or gift-card side effects.
+          const paymentUpdates = paidBookingUpdates(bookings, amountPaid, paymentId, "Nets Easy", null, paymentDiscount.code);
+
           // Charge the payment
           const chargeResponse = await fetch(`https://api.dibspayment.eu/v1/payments/${paymentId}/charges`, {
             method: "POST",
@@ -1067,9 +1093,6 @@ router.post("/send-paylink", async (req, res) => {
           console.log("Charge response:", chargeData);
 
           // Update all bookings with this paymentId in database
-          const collections = db.collection("bookings");
-
-          const bookings = await collections.find({ paymentId: paymentId }).toArray();
           
           // If no bookings found, send debug email non-blocking
           if (bookings.length === 0) {
@@ -1080,10 +1103,9 @@ router.post("/send-paylink", async (req, res) => {
             });
           }
           
-          const originalTotalCost = bookings.reduce((sum, b) => sum + (b.cost || 0), 0);
-          const amountPaid = orderData.amount.amount / 100;   // SEK
-          const giftCardUsed = originalTotalCost - amountPaid;
-          await handleGiftCardUpdate(bookings, giftCardUsed);
+          const originalTotalCost = bookings.reduce((sum, b) => sum + Number(b.originalCost ?? b.cost ?? 0), 0);
+          const giftCardUsed = Math.max(0, originalTotalCost - amountPaid);
+          await handleGiftCardUpdate(bookings, giftCardUsed, paymentId);
 
           // Create a reliable Swedish timezone timestamp
           const currentTime = new Date();
@@ -1097,17 +1119,10 @@ router.post("/send-paylink", async (req, res) => {
             second: '2-digit'
           }).format(currentTime);
 
-          const result = await collections.updateMany(
-            { paymentId: paymentId },
-            {
-              $set: {
-                available: false,
-                payed: "Nets Easy",
-                updatedAt: new Date(),
-                bookedAt: swedenTime
-              }
-            }
-          );
+          paymentUpdates.forEach(operation => { operation.updateOne.update.$set.bookedAt = swedenTime; });
+          const result = paymentUpdates.length
+            ? await collections.bulkWrite(paymentUpdates)
+            : { matchedCount: 0, modifiedCount: 0 };
 
           console.log("Booking update result:", {
             matchedCount: result.matchedCount,
@@ -1168,29 +1183,18 @@ router.post("/send-paylink", async (req, res) => {
             // Continue processing even if backup deletion fails
           }
 
-          // Delete discount usage after successful payment
-          try {
-            const discountCollection = db.collection("discounts");
-            const discountDeleteResult = await discountCollection.deleteOne({ usedBy: paymentId });
-            if (discountDeleteResult.deletedCount > 0) {
-              console.log(`✅ Deleted discount with usedBy: ${paymentId}`);
-            }
-          } catch (discountError) {
-            console.error(`❌ Error deleting discount for payment ${paymentId}:`, discountError);
-          }
+          await safelyReleaseDiscount(paymentId, true, paymentDiscount.doc);
 
           try {
-            const bookings = await collections.find({ paymentId: paymentId }).toArray();
-
+            // Keep the reservation snapshot for the receipt discount breakdown.
             if (bookings.length > 0 && bookings[0].email) {
               // Prepare booking details for email
               const email = bookings[0].email;
               const bookingRef = bookings[0].bookingRef;
               const bookingDate = new Date().toISOString().split('T')[0];
-              const subtotal = bookings.reduce((sum, booking) => sum + (booking.cost || 0), 0);
-              // Total-level discounts leave each booking's cost unchanged. Use
-              // the provider-confirmed amount for the receipt and show the
-              // difference as a separate discount row.
+              const subtotal = bookings.reduce((sum, booking) => sum + Number(booking.cost || 0), 0);
+              // The snapshot contains reservation prices; the stored costs now
+              // contain paid shares. Keep the provider amount as receipt total.
               const totalCost = amountPaid;
               const receiptDiscount = Math.max(0, subtotal - totalCost);
               const receiptDiscountLabel = bookings.some(booking => booking.giftCardReference)
@@ -1363,7 +1367,7 @@ router.post("/send-paylink", async (req, res) => {
       console.error("Error processing webhook event:", error);
       res.status(500).json({ error: error.message });
     }
-  });
+  }));
 
 // Add this route to your backend booking routes:
 
@@ -3567,6 +3571,24 @@ router.patch("/checkout", async (req, res) => {
 
   try {
     const incomingPaymentId = updateData.paymentId;
+    const slotId = `${year}-${month}-${day}-${category.trim()}-${time}`;
+    if (isFromAdmin && updateData.available === true) {
+      // Both cancellation and refund free the slot. Clear customer data even
+      // when an older admin client omits the new audit fields.
+      Object.assign(updateData, {
+        originalCost: null, discountCode: null, paymentId: null,
+        giftCardReference: null, bookingRef: null
+      });
+      const previousBooking = await db.collection("bookings").findOne({ timeSlotId: slotId });
+      const previousPayment = previousBooking?.paymentId
+        ? await psCol().findOne({ paymentId: previousBooking.paymentId }) : null;
+      // A campaign percentage must not become a room's per-player price.
+      if (previousBooking?.discountCode || previousPayment?.discountCode) updateData.discount = 0;
+    } else if (!isFromAdmin && (updateData.available === "occupied" || updateData.available === false)) {
+      // A new customer's reservation cannot inherit an earlier payment stamp.
+      updateData.originalCost = null;
+      updateData.discountCode = null;
+    }
     // Fix 6: When marking a slot as occupied from a customer payment, only match if the slot
     // is free (paymentId null) or already belongs to this paymentId. This prevents the last-write-wins
     // race where two concurrent retry attempts silently overwrite each other.
@@ -3606,13 +3628,13 @@ router.patch("/checkout", async (req, res) => {
       }).toArray();
       
       // Find a discount value from the other time slots (take the first non-zero discount found)
-      const discountToApply = sameTimeSlots.find(slot => slot.discount && slot.discount !== 0)?.discount;
+      const discountToApply = sameTimeSlots.find(slot => !slot.discountCode && slot.discount && slot.discount !== 0)?.discount;
       
       if (discountToApply) {
         // Update the cancelled booking with the discount from other time slots
         await db.collection("bookings").updateOne(
           { timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}` },
-          { $set: { discount: discountToApply } }
+          { $set: { discount: discountToApply, originalCost: null, discountCode: null, paymentId: null } }
         );
       }
     }
@@ -3928,7 +3950,7 @@ router.get("/booking/:timeSlotId", async (req, res) => {
   }
 });
 
-router.post("/swish/callback", async (req, res) => {
+router.post("/swish/callback", serializePaymentCallback(async (req, res) => {
   try {
     const {
       id,
@@ -3964,7 +3986,7 @@ router.post("/swish/callback", async (req, res) => {
 
         // Fix 5: Idempotency — if this callback was already processed (e.g. Swish retry),
         // return 200 immediately to avoid double emails and double gift card deductions.
-        if (bookings.length > 0 && bookings[0].payed === "Swish") {
+        if (bookings.length > 0 && bookings.every(booking => booking.payed === "Swish")) {
           console.log(`Swish callback already processed for paymentId: ${paymentId}, skipping.`);
           return res.sendStatus(200);
         }
@@ -3978,10 +4000,12 @@ router.post("/swish/callback", async (req, res) => {
           });
         }
 
-        const originalTotalCost = bookings.reduce((sum, b) => sum + (b.cost || 0), 0);
-        const amountPaid = parseFloat(req.body.amount);     // SEK
-        const giftCardUsed = originalTotalCost - amountPaid;
-        await handleGiftCardUpdate(bookings, giftCardUsed);
+        const originalTotalCost = bookings.reduce((sum, b) => sum + Number(b.originalCost ?? b.cost ?? 0), 0);
+        const amountPaid = Number(req.body.amount); // SEK
+        const paymentDiscount = await getPaymentDiscount(db, paymentId, bookings);
+        const paymentUpdates = paidBookingUpdates(bookings, amountPaid, paymentId, "Swish", null, paymentDiscount.code);
+        const giftCardUsed = Math.max(0, originalTotalCost - amountPaid);
+        await handleGiftCardUpdate(bookings, giftCardUsed, paymentId);
 
         // Create a reliable Swedish timezone timestamp
         const currentTime = new Date();
@@ -3995,11 +4019,11 @@ router.post("/swish/callback", async (req, res) => {
           second: '2-digit'
         }).format(currentTime);
 
-        // Update all bookings with this paymentId
-        const result = await collections.updateMany(
-          { paymentId: paymentId },
-          { $set: { available: false, payed: "Swish", updatedAt: new Date(), bookedAt: swedenTime } }
-        );
+        // Allocate the confirmed amount across slots; never reprice in admin.
+        paymentUpdates.forEach(operation => { operation.updateOne.update.$set.bookedAt = swedenTime; });
+        const result = paymentUpdates.length
+          ? await collections.bulkWrite(paymentUpdates)
+          : { matchedCount: 0, modifiedCount: 0 };
         console.log("Booking update result:", result);
 
         // Send GA4 tracking for completed booking
@@ -4056,16 +4080,7 @@ router.post("/swish/callback", async (req, res) => {
           // Continue processing even if backup deletion fails
         }
 
-        // Delete discount usage after successful payment
-        try {
-          const discountCollection = db.collection("discounts");
-          const discountDeleteResult = await discountCollection.deleteOne({ usedBy: paymentId });
-          if (discountDeleteResult.deletedCount > 0) {
-            console.log(`✅ Deleted discount with usedBy: ${paymentId}`);
-          }
-        } catch (discountError) {
-          console.error(`❌ Error deleting discount for payment ${paymentId}:`, discountError);
-        }
+        await safelyReleaseDiscount(paymentId, true, paymentDiscount.doc);
 
         try {
           // Use the existing bookings array for confirmation email
@@ -4074,10 +4089,8 @@ router.post("/swish/callback", async (req, res) => {
             const email = bookings[0].email;
             const bookingRef = bookings[0].bookingRef;
             const bookingDate = new Date().toISOString().split('T')[0];
-            const subtotal = bookings.reduce((sum, booking) => sum + (booking.cost || 0), 0);
-            // Total-level discounts leave each booking's cost unchanged. Use
-            // the confirmed Swish amount for the receipt and show the
-            // difference as a separate discount row.
+            const subtotal = bookings.reduce((sum, booking) => sum + Number(booking.cost || 0), 0);
+            // Preserve the reservation snapshot for the discount breakdown.
             const totalCost = amountPaid;
             const receiptDiscount = Math.max(0, subtotal - totalCost);
             const receiptDiscountLabel = bookings.some(booking => booking.giftCardReference)
@@ -4240,10 +4253,9 @@ router.post("/swish/callback", async (req, res) => {
         console.log("Payment terminated from paymentStates:", paymentId);
 
       } catch (dbError) {
-        console.error('Error updating booking or sending email:', dbError, {
-          message,
-          parseResult: message.match(/([A-Z\s]+)\s+(\d+)\/(\w+)\s+(\d{2}:\d{2})/)
-        });
+        console.error('Error confirming Swish booking:', dbError);
+        // Acknowledge only persisted payments so Swish can retry a DB failure.
+        return res.sendStatus(500);
       }
     } else if (status === 'DECLINED' || status === 'ERROR') {
       try {
@@ -4273,6 +4285,9 @@ router.post("/swish/callback", async (req, res) => {
                 players: 0,
                 payed: null,
                 cost: 0,
+                originalCost: null,
+                discountCode: null,
+                discount: 0,
                 bookedBy: null,
                 number: null,
                 email: null,
@@ -4337,23 +4352,14 @@ router.post("/swish/callback", async (req, res) => {
           console.error(`❌ Error terminating payment ${paymentId} on Swish provider:`, terminateError.message);
         }
 
-        // Clean up any discounts used by this payment
-        try {
-          const discountCollection = db.collection("discounts");
-          const discountDeleteResult = await discountCollection.deleteOne({ usedBy: paymentId });
-          if (discountDeleteResult.deletedCount > 0) {
-            console.log(`✅ Cleaned up discount for failed payment ${paymentId}`);
-          }
-        } catch (discountError) {
-          console.error(`❌ Error cleaning up discount for failed payment ${paymentId}:`, discountError);
-        }
+        await safelyReleaseDiscount(paymentId);
 
       } catch (cleanupError) {
         console.error('Error cleaning up failed Swish payment:', cleanupError);
       }
     }
 
-    // Always return 200 OK to Swish
+    // Acknowledge successfully processed and failed-payment notifications.
     res.status(200).json({
       message: 'Callback received',
       receivedData: req.body
@@ -4366,7 +4372,7 @@ router.post("/swish/callback", async (req, res) => {
       errorDetails: error.message
     });
   }
-});
+}));
 
 router.post('/swish/payment/:instructionUUID', async (req, res) => {
   try {
@@ -4528,8 +4534,10 @@ router.delete("/v1/payments/:paymentId/cancel", async (req, res) => {
       { paymentId, available: "occupied" },
       { $set: { available: true, players: 0, payed: null, cost: 0,
                 bookedBy: null, number: null, email: null, info: null,
-                bookingRef: null, paymentId: null, updatedAt: new Date() } }
+                bookingRef: null, paymentId: null, discount: 0, giftCardReference: null,
+                originalCost: null, discountCode: null, updatedAt: new Date() } }
     );
+    await safelyReleaseDiscount(paymentId);
     await psCol().deleteOne({ paymentId });
 
     // Cancel on Swish (fire-and-forget)
@@ -5255,7 +5263,7 @@ router.post("/reset-all-offers", async (req, res) => {
 
 // Gift Card Routes
 
-const handleGiftCardUpdate = async (bookings, totalCost) => {
+const handleGiftCardUpdate = async (bookings, totalCost, paymentId = null) => {
   if (!bookings || bookings.length === 0) return;
 
   const firstBooking = bookings[0];
@@ -5268,6 +5276,21 @@ const handleGiftCardUpdate = async (bookings, totalCost) => {
       const giftCard = await giftCardCollections.findOne({ reference: giftCardReference });
 
       if (giftCard && giftCard.payed) {
+          if (paymentId) {
+              // Persist the deduction and its payment marker in one write. A
+              // callback retry after a booking DB failure must not spend twice.
+              await giftCardCollections.updateOne(
+                  { reference: giftCardReference, appliedBookingPayments: { $ne: paymentId } },
+                  [{ $set: {
+                      totalAmount: { $max: [0, { $subtract: ["$totalAmount", Math.max(0, totalCost)] }] },
+                      appliedBookingPayments: { $setUnion: [
+                          { $ifNull: ["$appliedBookingPayments", []] }, { $literal: [paymentId] }
+                      ] },
+                      updatedAt: "$$NOW"
+                  } }]
+              );
+              return;
+          }
           const amountToDeduct = Math.min(totalCost, giftCard.totalAmount);
           const newTotalAmount = giftCard.totalAmount - amountToDeduct;
 
@@ -5310,6 +5333,9 @@ router.post("/confirm-with-giftcard", async (req, res) => {
                       email,
                       bookingRef,
                       cost: data.time.cost,
+                      originalCost: null,
+                      discountCode: null,
+                      paymentId: null,
                       players: data.time.players,
                       giftCardReference
                   }
@@ -6894,6 +6920,10 @@ router.post("/confirmBookingFromSenaste", async (req, res) => {
           email: bookingData.email,
           players: bookingData.players,
           cost: bookingData.cost,
+          originalCost: bookingData.originalCost ?? null,
+          discountCode: bookingData.discountCode ?? null,
+          giftCardReference: bookingData.giftCardReference ?? null,
+          discount: bookingData.discount ?? 0,
           payed: bookingData.payed || "Bekräftad från Senaste",
           bookingRef: bookingData.bookingRef,
           paymentId: bookingData.paymentId,

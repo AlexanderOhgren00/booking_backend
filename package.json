@@ -4,6 +4,7 @@
   "type": "module",
   "main": "checkout.js",
   "scripts": {
+    "test": "node --test test/*.test.js",
     "client-install": "npm install --prefix client",
     "start": "node checkout.js",
     "server": "nodemon checkout.js",
