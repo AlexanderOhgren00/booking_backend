@@ -1736,57 +1736,57 @@ router.get("/roomDiscounts", async (req, res) => {
   }
 });
 
-// Process offer updates in chunks to avoid timeouts
-async function processOfferChunk(updates, offerValue) {
-  const collections = db.collection("bookings");
+// Both immediate and background offer updates use the same date filters.
+function buildOfferOperations(updates, offerValue) {
+  if (!Array.isArray(updates) || !updates.length ||
+      typeof offerValue !== 'number' || !Number.isSafeInteger(offerValue) || offerValue <= 0) {
+    throw new Error('Select time slots and provide a positive whole-SEK offer value');
+  }
   const currentYear = new Date().getFullYear();
-  const years = Array.from(
-    { length: 2030 - currentYear + 1 },
-    (_, i) => currentYear + i
-  );
-
-  // Build bulk operations for efficient processing
-  const allBulkOps = [];
-
-  for (const update of updates) {
-    const { time, category, weekday, month } = update;
-    
-    // Pre-calculate matching days for all years to build filter criteria
+  return updates.map(update => {
+    if (!update || typeof update.time !== 'string' || !update.time.trim() ||
+        typeof update.category !== 'string' || !update.category.trim()) {
+      throw new Error('Each offer update requires a time and category');
+    }
     const matchingDays = [];
-    
-    for (const year of years) {
-      const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
-      
-      for (let day = 1; day <= daysInMonth; day++) {
-        const currentDate = new Date(year, MONTHS.indexOf(month), day);
-        if (currentDate.getDay() === weekday) {
-          matchingDays.push({ year, month, day });
+    if (Object.hasOwn(update, 'date')) {
+      // Reject invalid dates rather than accidentally applying a recurring offer.
+      if (typeof update.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(update.date)) {
+        throw new Error('Date must be a valid YYYY-MM-DD calendar date');
+      }
+      const [year, monthNumber, day] = update.date.split('-').map(Number);
+      const date = new Date(`${update.date}T00:00:00.000Z`);
+      if (year < 1 || date.getUTCFullYear() !== year ||
+          date.getUTCMonth() !== monthNumber - 1 || date.getUTCDate() !== day) {
+        throw new Error('Date must be a valid YYYY-MM-DD calendar date');
+      }
+      matchingDays.push({ year, month: MONTHS[monthNumber - 1], day });
+    } else {
+      const monthIndex = MONTHS.indexOf(update.month);
+      if (monthIndex < 0 || !Number.isInteger(update.weekday) || update.weekday < 0 || update.weekday > 6) {
+        throw new Error('Recurring offers require a valid month and weekday');
+      }
+      // Preserve the existing recurring schedule through 2030.
+      for (let year = currentYear; year <= 2030; year++) {
+        const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+        for (let day = 1; day <= daysInMonth; day++) {
+          if (new Date(Date.UTC(year, monthIndex, day)).getUTCDay() === update.weekday) {
+            matchingDays.push({ year, month: update.month, day });
+          }
         }
       }
     }
+    return matchingDays.length ? { updateMany: {
+      filter: { category: update.category, time: update.time, available: true, $or: matchingDays },
+      update: { $set: { offer: offerValue } }
+    } } : null;
+  }).filter(Boolean);
+}
 
-    // Create bulk write operations for this update
-    if (matchingDays.length > 0) {
-      const bulkOp = {
-        updateMany: {
-          filter: {
-            $or: matchingDays.map(({ year, month, day }) => ({
-              year: year,
-              month: month,
-              day: day,
-              category: category,
-              time: time,
-              available: true
-            }))
-          },
-          update: {
-            $set: { offer: offerValue }
-          }
-        }
-      };
-      allBulkOps.push(bulkOp);
-    }
-  }
+// Process offer updates in chunks to avoid timeouts
+async function processOfferChunk(updates, offerValue) {
+  const collections = db.collection("bookings");
+  const allBulkOps = buildOfferOperations(updates, offerValue);
 
   // Execute all bulk operations with optimal batch size
   let totalModified = 0;
@@ -2705,13 +2705,17 @@ router.patch("/MonthBulkTimeChange", async (req, res) => {
 router.patch("/bulk-update-offers", async (req, res) => {
   const { updates, offerValue } = req.body;
 
-  if (!updates || !Array.isArray(updates) || !offerValue) {
-    return res.status(400).json({ error: "Updates array and offerValue are required" });
+  let allBulkOps;
+  try {
+    // Validate the entire request before starting any writes or background jobs.
+    allBulkOps = buildOfferOperations(updates, offerValue);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
   }
 
   try {
     // For very large operations, process in chunks
-    const estimatedOperations = updates.length * 6 * 4; // rough estimate
+    const estimatedOperations = updates.reduce((sum, update) => sum + (Object.hasOwn(update, "date") ? 1 : 24), 0);
     if (estimatedOperations > 800) {
       // Process in multiple smaller requests to avoid timeout
       const chunkSize = Math.ceil(updates.length / 3); // Split into 3 chunks
@@ -2781,55 +2785,6 @@ router.patch("/bulk-update-offers", async (req, res) => {
     }
 
     const collections = db.collection("bookings");
-    const currentYear = new Date().getFullYear();
-    const years = Array.from(
-      { length: 2030 - currentYear + 1 },
-      (_, i) => currentYear + i
-    );
-
-    // Build bulk operations for efficient processing
-    const allBulkOps = [];
-
-    for (const update of updates) {
-      const { time, category, weekday, month, offerType } = update;
-      
-      // Pre-calculate matching days for all years to build filter criteria
-      const matchingDays = [];
-      
-      for (const year of years) {
-        const daysInMonth = new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
-        
-        for (let day = 1; day <= daysInMonth; day++) {
-          const currentDate = new Date(year, MONTHS.indexOf(month), day);
-          if (currentDate.getDay() === weekday) {
-            matchingDays.push({ year, month, day });
-          }
-        }
-      }
-
-      // Create bulk write operations for this update
-      if (matchingDays.length > 0) {
-        const bulkOp = {
-          updateMany: {
-            filter: {
-              $or: matchingDays.map(({ year, month, day }) => ({
-                year: year,
-                month: month,
-                day: day,
-                category: category,
-                time: time,
-                available: true
-              }))
-            },
-            update: {
-              $set: { offer: offerValue }
-            }
-          }
-        };
-        allBulkOps.push(bulkOp);
-      }
-    }
-
     // Execute all bulk operations with timeout protection
     let totalModified = 0;
     const results = [];
