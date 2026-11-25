@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto';
 import express from 'express';
 import { MongoClient, ObjectId } from 'mongodb';
 import * as pricing from '../bookingPricing.js';
+import * as giftCardCheckout from '../giftCardCheckout.js';
+import { createGiftCardProviders } from '../giftCardProviders.js';
 
 export async function createHarness(seed = {}) {
   const uri = process.env.MONGODB_TEST_URI;
@@ -24,7 +26,7 @@ export async function createHarness(seed = {}) {
   const intervals = [];
   const errors = [];
   const context = {
-    ...pricing, express, ObjectId, db,
+    ...pricing, ...giftCardCheckout, createGiftCardProviders, express, ObjectId, db, client,
     rateLimit: () => (_req, _res, next) => next(), bcrypt: {}, jwt: {},
     wss: { clients: new Set() }, WebSocket: { OPEN: 1 },
     fs: { readFileSync: () => '' }, https: { Agent: class {} },

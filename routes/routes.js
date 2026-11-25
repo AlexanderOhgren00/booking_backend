@@ -1,6 +1,8 @@
 import express from "express";
 import { ObjectId } from "mongodb";
-import db from "../db/connections.js";
+import db, { client } from "../db/connections.js";
+import { GiftCardCheckoutError, archiveGiftCardBooking, checkoutResult, moveGiftCardBooking, prepareGiftCardCheckout, restoreGiftCardBooking, slotPriceMinor, toMinor } from "../giftCardCheckout.js";
+import { createGiftCardProviders } from "../giftCardProviders.js";
 import rateLimit from 'express-rate-limit';
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -632,7 +634,8 @@ router.get("/getRecentBookings", async (req, res) => {
 
     // Create query conditions based on lastDate
     const queryCondition = { available: false };
-    const backupQueryCondition = { 
+    const backupQueryCondition = {
+      restoredAt: null,
       $or: [
         { available: "occupied" },
         { backupSource: "canceled" }
@@ -697,6 +700,173 @@ router.patch("/bulkBaseCost", async (req, res) => {
   const result = await collections.updateMany({}, { $set: { baseCost } });
   await broadcast({ type: "bulkBaseCostUpdated", message: "Base cost updated for all bookings", data: { baseCost } });
   res.json({ message: "Base cost updated", result });
+});
+
+
+const giftCardAttempts = db.collection("giftCardCheckouts");
+
+function giftCardSwishClient() {
+  return axios.create({ timeout: 12000, httpsAgent: new https.Agent({
+    cert: fs.readFileSync(join(__dirname, "../ssl/myCertificate.pem"), "utf8"),
+    key: fs.readFileSync(join(__dirname, "../ssl/PrivateKey.key"), "utf8"),
+    ca: fs.readFileSync(join(__dirname, "../ssl/Swish_TLS_RootCA.pem"), "utf8"),
+    minVersion: "TLSv1.2"
+  }) });
+}
+
+async function deliverGiftCardReceipt(attempt) {
+  const now = new Date();
+  const claimed = await giftCardAttempts.findOneAndUpdate({
+    _id: attempt._id, state: "settled", receiptSentAt: null,
+    $or: [{ receiptLeaseUntil: null }, { receiptLeaseUntil: { $lt: now } }]
+  }, { $set: { receiptLeaseUntil: new Date(+now + 120000) } });
+  if (!claimed) return;
+  const receipt = checkoutResult(attempt);
+  try {
+    await sendConfirmationEmail(attempt.customer.email, "Bokningsbekräftelse", {
+      bookingRef: receipt.bookingRef,
+      bookingDate: attempt.settledAt.toISOString().slice(0, 10),
+      items: receipt.slots.map(slot => ({
+        category: slot.category, date: `${slot.day} ${slot.month} ${slot.year}`,
+        time: slot.time, players: slot.players, cost: slot.priceMinor / 100
+      })),
+      paymentMethod: receipt.providerMinor ? "Presentkort + " + receipt.paymentMethod : receipt.paymentMethod,
+      giftCardAmount: receipt.giftCardMinor / 100, providerAmount: receipt.providerMinor / 100,
+      tax: Math.round(receipt.totalMinor * 0.20) / 100, totalCost: receipt.totalMinor / 100
+    });
+    await giftCardAttempts.updateOne({ _id: attempt._id }, { $set: { receiptSentAt: new Date() } });
+  } catch (error) {
+    console.error("Gift card receipt delivery failed", attempt.bookingRef, error.message);
+  }
+}
+
+async function notifyGiftCardSettlement(attempt) {
+  const bookings = attempt.slots.map(({ year, month, day, category, time, timeSlotId }) =>
+    ({ year, month, day, category, time, timeSlotId }));
+  await broadcast({
+    type: "bookingInitialized", title: "Bokning slutförd", message: "Bokad med presentkort",
+    bookings, bookingsCount: bookings.length, timeSlotIds: bookings.map(slot => slot.timeSlotId),
+    paymentId: attempt.paymentId, paymentMethod: checkoutResult(attempt).paymentMethod
+  });
+  void trackBookingCompleted();
+  void deliverGiftCardReceipt(attempt).catch(error => console.error("Gift card receipt", error.message));
+}
+
+const giftCardProviders = createGiftCardProviders({
+  db, client, fetch: (...args) => fetch(...args), netsKey: key, swishClient: giftCardSwishClient,
+  onSettled: notifyGiftCardSettlement
+});
+
+function respondGiftCardError(res, error) {
+  if (error instanceof GiftCardCheckoutError) {
+    return res.status(error.status).json({ code: error.message, ...(error.quote && { quote: error.quote }) });
+  }
+  console.error("Gift card checkout error", error.message);
+  return res.status(500).json({ code: "CHECKOUT_UNAVAILABLE" });
+}
+
+const giftCardCheckoutLimiter = rateLimit({ windowMs: 60_000, max: 30 });
+
+router.get("/booking-gift-cards/:reference", giftCardCheckoutLimiter, async (req, res) => {
+  const reference = req.params.reference.trim();
+  if (!reference || reference.length > 64) return res.status(400).json({ code: "INVALID_GIFT_CARD" });
+  try {
+    const giftcards = db.collection("giftcards");
+    const projection = { reference: 1, totalAmount: 1, heldMinor: 1 };
+    const card = await giftcards.findOne({ reference, payed: true }, { projection })
+      ?? await giftcards.findOne({ reference: reference.toLowerCase(), payed: true }, { projection });
+    const balanceMinor = card ? Math.max(0, toMinor(card.totalAmount) - (card.heldMinor ?? 0)) : 0;
+    return balanceMinor
+      ? res.json({ reference: card.reference, balanceMinor })
+      : res.status(404).json({ code: "INVALID_GIFT_CARD" });
+  } catch (error) {
+    return respondGiftCardError(res, error);
+  }
+});
+
+router.post("/gift-card-checkouts", giftCardCheckoutLimiter, async (req, res) => {
+  try {
+    const { attempt, created } = await prepareGiftCardCheckout(db, client, req.body);
+    if (created && attempt.state === "settled") await notifyGiftCardSettlement(attempt);
+    if (created && attempt.state === "prepared") await broadcast({ type: "timeUpdate", message: "Bokning reserverad" });
+    const result = await giftCardProviders.start(attempt);
+    return res.json(checkoutResult(result));
+  } catch (error) {
+    return respondGiftCardError(res, error);
+  }
+});
+
+router.get("/gift-card-checkouts/:attemptId", async (req, res) => {
+  const attempt = await giftCardAttempts.findOne({ _id: req.params.attemptId });
+  return attempt ? res.json(checkoutResult(attempt)) : res.status(404).json({ code: "CHECKOUT_NOT_FOUND" });
+});
+
+async function cancelGiftCardAttempt(attempt, expired = false) {
+  const result = await giftCardProviders.cancel(attempt, expired);
+  if (result.state === "cancelled" && attempt.state !== "cancelled") {
+    await broadcast({ type: "timeUpdate", message: "Bokningsreservation släppt" });
+  }
+  return result;
+}
+
+router.delete("/gift-card-checkouts/:attemptId", giftCardCheckoutLimiter, async (req, res) => {
+  try {
+    const attempt = await giftCardAttempts.findOne({ _id: req.params.attemptId });
+    if (!attempt) return res.status(404).json({ code: "CHECKOUT_NOT_FOUND" });
+    return res.json(checkoutResult(await cancelGiftCardAttempt(attempt)));
+  } catch (error) {
+    return respondGiftCardError(res, error);
+  }
+});
+
+async function reconcileGiftCardCheckouts() {
+  try {
+    const now = new Date();
+    const expired = await giftCardAttempts.find({
+      state: { $in: ["prepared", "starting", "pending", "cancelling", "charging"] }, expiresAt: { $lte: now }
+    }).limit(20).toArray();
+    for (const attempt of expired) {
+      try {
+        await cancelGiftCardAttempt(attempt, true);
+      } catch (error) {
+        console.error("Gift card payment reconciliation", attempt.bookingRef, error.message);
+      }
+    }
+    const receipts = await giftCardAttempts.find({
+      state: "settled", receiptSentAt: null, $or: [{ receiptLeaseUntil: null }, { receiptLeaseUntil: { $lt: now } }]
+    }).limit(20).toArray();
+    for (const attempt of receipts) await deliverGiftCardReceipt(attempt);
+  } catch (error) {
+    console.error("Gift card checkout cleanup failed", error.message);
+  }
+}
+setInterval(reconcileGiftCardCheckouts, 60_000);
+
+async function isBookingAdmin(req) {
+  const token = req.headers.authorization?.match(/^Bearer (.+)$/i)?.[1];
+  if (!token) return false;
+  try {
+    const { userId } = jwt.verify(token, jwt_key);
+    const user = await db.collection("users").findOne({ _id: new ObjectId(userId) });
+    return ["admin", "topAdmin"].includes(user?.privilage);
+  } catch {
+    return false;
+  }
+}
+
+router.patch("/admin/gift-card-bookings/move", async (req, res) => {
+  if (!await isBookingAdmin(req)) return res.sendStatus(403);
+  const { sourceId, destinationId } = req.body;
+  if (typeof sourceId !== "string" || typeof destinationId !== "string" || sourceId === destinationId) {
+    return res.status(400).json({ code: "INVALID_CHECKOUT" });
+  }
+  try {
+    const moved = await moveGiftCardBooking(db, client, sourceId, destinationId);
+    await broadcast({ type: "timeUpdate", message: "Bokning ändrad" });
+    return res.json(moved);
+  } catch (error) {
+    return respondGiftCardError(res, error);
+  }
 });
 
 router.post("/v1/payments", async (req, res) => {
@@ -834,7 +1004,7 @@ router.post("/v1/payments/:paymentId/initialize", async (req, res) => {
       );
       console.log(slotIds, "slotIds");
       const updateResult = await bookingCollection.updateMany(
-        { timeSlotId: { $in: slotIds } },
+        { timeSlotId: { $in: slotIds }, giftCardCheckoutId: null },
         { $set: { paymentId } }
       );
 
@@ -1053,6 +1223,12 @@ router.post("/send-paylink", async (req, res) => {
           // Extract order details
           const orderData = event.data.order;
           const paymentId = event.data.paymentId;
+          const giftCardAttempt = await giftCardProviders.byPayment(paymentId);
+          if (giftCardAttempt) {
+            if (!["nets", "riverty"].includes(giftCardAttempt.method)) return res.sendStatus(409);
+            await giftCardProviders.completeNets(giftCardAttempt);
+            return res.sendStatus(200);
+          }
 
           // Log the order details
           console.log("Order details:", {
@@ -1503,6 +1679,8 @@ router.post("/v1/payments/:paymentId/charges", async (req, res) => {
 router.put("/v1/payments/:paymentId/terminate", async (req, res) => {
   try {
     const paymentId = req.params.paymentId;
+    const giftCardAttempt = await giftCardProviders.byPayment(paymentId);
+    if (giftCardAttempt) return res.json(checkoutResult(await cancelGiftCardAttempt(giftCardAttempt)));
     const { hasConfirmedBooking } = await getPaymentCancellationGuard(paymentId);
 
     if (hasConfirmedBooking) {
@@ -3522,12 +3700,28 @@ router.get("/years", haltOnTimedout, async (req, res) => {
 
 router.patch("/checkout", async (req, res) => {
   const { year, month, day, category, time, ...updateData } = req.body;
+  delete updateData.giftCardCheckoutId;
+  delete updateData.giftCardSlotId;
+  delete updateData.giftCardAllocations;
+  delete updateData.providerPaidMinor;
   const isFromAdmin = req.query.fromAdmin === 'true' || req.headers['x-from-admin'] === 'true';
 
   try {
     const incomingPaymentId = updateData.paymentId;
     const slotId = `${year}-${month}-${day}-${category.trim()}-${time}`;
     if (isFromAdmin && updateData.available === true) {
+      if (req.query.action === "cancel") {
+        const giftCardBooking = await db.collection("bookings").findOne({
+          timeSlotId: slotId, giftCardCheckoutId: { $type: "string" }
+        });
+        if (giftCardBooking?.available === false) {
+          if (!await isBookingAdmin(req)) return res.sendStatus(403);
+          const result = await archiveGiftCardBooking(db, client, slotId);
+          await broadcast({ type: "backupAdded", message: "Bokning avbokad" });
+          return res.json({ matchedCount: result.matchedCount, archived: true });
+        }
+      }
+
       // Both cancellation and refund free the slot. Clear customer data even
       // when an older admin client omits the new audit fields.
       Object.assign(updateData, {
@@ -3559,12 +3753,17 @@ router.patch("/checkout", async (req, res) => {
       filter.available = { $nin: ["occupied", false] };
     }
 
+    // Legacy writes may update ordinary slots and confirmed admin bookings.
+    filter.$and = [{ $or: [{ giftCardCheckoutId: null }, ...(isFromAdmin ? [{ available: false }] : [])] }];
+    if (isFromAdmin && updateData.available === true) Object.assign(updateData, {
+      giftCardCheckoutId: null, giftCardAllocations: [], providerPaidMinor: null, giftCardSlotId: null
+    });
     const result = await db.collection("bookings").updateOne(
       filter,
       { $set: { ...updateData, updatedAt: new Date() } }
     );
 
-    if (result.matchedCount === 0 && (updateData.available === "occupied" || updateData.available === false) && !isFromAdmin) {
+    if (result.matchedCount === 0 && ["occupied", false, true].includes(updateData.available)) {
       return res.status(409).json({
         error: "Slot already taken by another payment",
         timeSlotId: `${year}-${month}-${day}-${category.trim()}-${time}`
@@ -3624,7 +3823,7 @@ router.delete("/checkout", async (req, res) => {
     const timeSlotId = `${year}-${month}-${day}-${category.trim()}-${time}`;
 
     // Delete the booking completely
-    const result = await collections.deleteOne({ timeSlotId: timeSlotId });
+    const result = await collections.deleteOne({ timeSlotId, $or: [{ giftCardCheckoutId: null }, { available: false }] });
 
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "Booking not found" });
@@ -3671,7 +3870,7 @@ router.patch("/changeTime", async (req, res) => {
 
     // Update the time slot
     const result = await collections.updateOne(
-      { timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}` },
+      { timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`, $or: [{ giftCardCheckoutId: null }, { available: false }] },
       {
         $set: {
           time: newTime,
@@ -3747,7 +3946,7 @@ router.patch("/bulkChangeTime", async (req, res) => {
 
       // Update the time slot
       const result = await collections.updateOne(
-        { timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}` },
+        { timeSlotId: `${year}-${month}-${day}-${category}-${oldTime}`, $or: [{ giftCardCheckoutId: null }, { available: false }] },
         {
           $set: {
             time: newTime,
@@ -3919,6 +4118,21 @@ router.post("/swish/callback", serializePaymentCallback(async (req, res) => {
     } = req.body;
 
     console.log('Swish callback received:', req.body);
+
+    const giftCardAttempt = await giftCardProviders.byPayment(id);
+    if (giftCardAttempt) {
+      try {
+        if (!giftCardAttempt.method.startsWith("swish")) return res.sendStatus(409);
+        if (req.headers.callbackidentifier !== giftCardAttempt.callbackIdentifier) return res.sendStatus(403);
+        const reconciled = await giftCardProviders.completeSwish(giftCardAttempt, req.body);
+        if (reconciled.state === "cancelled" && giftCardAttempt.state !== "cancelled") {
+          await broadcast({ type: "timeUpdate", message: "Bokningsreservation släppt" });
+        }
+        return res.sendStatus(200);
+      } catch (error) {
+        return respondGiftCardError(res, error);
+      }
+    }
 
     // Fix 7: Validate callbackIdentifier header — Swish returns the value we sent unchanged.
     // This confirms the callback is from Swish and not a spoofed request.
@@ -4475,6 +4689,8 @@ router.post('/swish/payment/:instructionUUID', async (req, res) => {
 router.delete("/v1/payments/:paymentId/cancel", async (req, res) => {
   const { paymentId } = req.params;
   try {
+    const giftCardAttempt = await giftCardProviders.byPayment(paymentId);
+    if (giftCardAttempt) return res.json(checkoutResult(await cancelGiftCardAttempt(giftCardAttempt)));
     const { hasConfirmedBooking } = await getPaymentCancellationGuard(paymentId);
 
     if (hasConfirmedBooking) {
@@ -4580,6 +4796,7 @@ router.get("/search/cancelledbookings", async (req, res) => {
 
     const query = {
       backupSource: "canceled",
+      restoredAt: null,
       $or: [
         { bookedBy: { $regex: searchTerm, $options: 'i' } },
         { email: { $regex: searchTerm, $options: 'i' } },
@@ -4984,10 +5201,7 @@ router.post("/edit-confirmation", async (req, res) => {
 });
 
 // Email confirmation route
-router.post('/send-confirmation', async (req, res) => {
-  try {
-    const { to, subject, bookingDetails } = req.body;
-
+async function sendConfirmationEmail(to, subject, bookingDetails) {
     // Create email HTML content
     const emailHtml = `
               <div style="
@@ -5073,6 +5287,13 @@ router.post('/send-confirmation', async (req, res) => {
                               <p style="margin: 0;">${bookingDetails.paymentMethod}</p>
                           </div>
 
+                          ${bookingDetails.giftCardAmount == null ? "" : `
+                          <div style="display:flex;justify-content:space-between;padding:10px 0;color:white">
+                              <span>Betalt med presentkort</span><span>SEK ${bookingDetails.giftCardAmount}</span>
+                          </div>
+                          <div style="display:flex;justify-content:space-between;padding:10px 0;color:white">
+                              <span>Betalt med Swish eller kort/faktura</span><span>SEK ${bookingDetails.providerAmount}</span>
+                          </div>`}
                           <div style="
                               display: grid;
                               grid-template-columns: auto auto;
@@ -5110,6 +5331,12 @@ router.post('/send-confirmation', async (req, res) => {
       html: emailHtml
     });
 
+}
+
+router.post('/send-confirmation', async (req, res) => {
+  try {
+    const { to, subject, bookingDetails } = req.body;
+    await sendConfirmationEmail(to, subject, bookingDetails);
     res.status(200).json({ message: 'Confirmation email sent successfully' });
   } catch (error) {
     console.error('Error sending confirmation email:', error);
@@ -5218,47 +5445,27 @@ router.post("/reset-all-offers", async (req, res) => {
 
 // Gift Card Routes
 
-const handleGiftCardUpdate = async (bookings, totalCost, paymentId = null) => {
-  if (!bookings || bookings.length === 0) return;
-
-  const firstBooking = bookings[0];
-  const { giftCardReference } = firstBooking;
-
-  if (!giftCardReference) return;
-
-  try {
-      const giftCardCollections = db.collection("giftcards");
-      const giftCard = await giftCardCollections.findOne({ reference: giftCardReference });
-
-      if (giftCard && giftCard.payed) {
-          if (paymentId) {
-              // Persist the deduction and its payment marker in one write. A
-              // callback retry after a booking DB failure must not spend twice.
-              await giftCardCollections.updateOne(
-                  { reference: giftCardReference, appliedBookingPayments: { $ne: paymentId } },
-                  [{ $set: {
-                      totalAmount: { $max: [0, { $subtract: ["$totalAmount", Math.max(0, totalCost)] }] },
-                      appliedBookingPayments: { $setUnion: [
-                          { $ifNull: ["$appliedBookingPayments", []] }, { $literal: [paymentId] }
-                      ] },
-                      updatedAt: "$$NOW"
-                  } }]
-              );
-              return;
-          }
-          const amountToDeduct = Math.min(totalCost, giftCard.totalAmount);
-          const newTotalAmount = giftCard.totalAmount - amountToDeduct;
-
-          await giftCardCollections.updateOne(
-              { reference: giftCardReference },
-              { $set: { totalAmount: newTotalAmount, updatedAt: new Date() } }
-          );
-          console.log(`Gift card ${giftCardReference} updated. New balance: ${newTotalAmount}`);
-      }
-  } catch (error) {
-      console.error(`Error updating gift card ${giftCardReference}:`, error);
-  }
-};
+async function handleGiftCardUpdate(bookings, totalCost, paymentId) {
+  const reference = bookings[0]?.giftCardReference;
+  if (!reference || !totalCost) return;
+  const giftcards = db.collection("giftcards");
+  const amountMinor = toMinor(totalCost);
+  const result = await giftcards.updateOne({
+    reference, payed: true, appliedBookingPayments: { $ne: paymentId },
+    $expr: { $gte: [
+      { $subtract: [{ $round: [{ $multiply: ["$totalAmount", 100] }, 0] }, { $ifNull: ["$heldMinor", 0] }] }, amountMinor
+    ] }
+  }, [{ $set: {
+    totalAmount: { $round: [{ $subtract: ["$totalAmount", amountMinor / 100] }, 2] },
+    appliedBookingPayments: { $setUnion: [
+      { $ifNull: ["$appliedBookingPayments", []] }, { $literal: [paymentId] }
+    ] },
+    updatedAt: "$$NOW"
+  } }]);
+  if (result.matchedCount) return;
+  if (await giftcards.findOne({ reference, appliedBookingPayments: paymentId })) return;
+  throw new Error("Legacy gift card balance unavailable for payment " + paymentId);
+}
 
 router.post("/confirm-with-giftcard", async (req, res) => {
   const { combinedData, giftCardReference, totalCost, name, number, email } = req.body;
@@ -5273,34 +5480,47 @@ router.post("/confirm-with-giftcard", async (req, res) => {
           hour: '2-digit', minute: '2-digit', second: '2-digit'
       }).format(currentTime);
 
-      const bookingPromises = combinedData.map(data => {
-          const timeSlotId = `${data.year}-${data.month}-${data.day}-${data.categoryName.trim()}-${data.time.time}`;
-          return collections.updateOne(
-              { timeSlotId },
-              {
-                  $set: {
-                      available: false,
-                      payed: "Presentkort",
-                      updatedAt: new Date(),
-                      bookedAt: swedenTime,
-                      bookedBy: name,
-                      number,
-                      email,
-                      bookingRef,
-                      cost: data.time.cost,
-                      originalCost: null,
-                      discountCode: null,
-                      paymentId: null,
-                      players: data.time.players,
-                      giftCardReference
-                  }
-              }
-          );
-      });
-
-      await Promise.all(bookingPromises);
-      const bookings = await collections.find({ bookingRef }).toArray();
-      await handleGiftCardUpdate(bookings, totalCost);
+      if (!Array.isArray(combinedData) || !combinedData.length || typeof giftCardReference !== "string") {
+        return res.status(400).json({ error: "Invalid booking or gift card" });
+      }
+      const selections = combinedData.map(data => ({
+        timeSlotId: `${data.year}-${data.month}-${data.day}-${data.categoryName.trim()}-${data.time.time}`,
+        players: data.time.players
+      }));
+      if (selections.length > 25 || new Set(selections.map(slot => slot.timeSlotId)).size !== selections.length ||
+          selections.some(slot => !Number.isInteger(slot.players) || slot.players < 2 || slot.players > 6)) {
+        return res.status(400).json({ error: "Invalid booking" });
+      }
+      const bookings = await client.withSession(session => session.withTransaction(async () => {
+        const stored = await collections.find({ timeSlotId: { $in: selections.map(slot => slot.timeSlotId) } }, { session }).toArray();
+        const slots = selections.map(slot => {
+          const available = stored.find(item => item.timeSlotId === slot.timeSlotId && item.available === true);
+          if (!available) throw new GiftCardCheckoutError(409, "SLOT_UNAVAILABLE");
+          return { ...slot, priceMinor: slotPriceMinor(available, slot.players) };
+        });
+        const amountMinor = slots.reduce((sum, slot) => sum + slot.priceMinor, 0);
+        if (amountMinor !== toMinor(totalCost)) throw new GiftCardCheckoutError(409, "QUOTE_CHANGED");
+        const giftcards = db.collection("giftcards");
+        const debit = await giftcards.updateOne({
+          reference: giftCardReference, payed: true,
+          $expr: { $gte: [
+            { $subtract: [{ $round: [{ $multiply: ["$totalAmount", 100] }, 0] }, { $ifNull: ["$heldMinor", 0] }] }, amountMinor
+          ] }
+        }, [{ $set: {
+          totalAmount: { $round: [{ $subtract: ["$totalAmount", amountMinor / 100] }, 2] },
+          updatedAt: "$$NOW"
+        } }], { session });
+        if (!debit.matchedCount) throw new GiftCardCheckoutError(409, "GIFT_CARD_BALANCE_UNAVAILABLE");
+        for (const { timeSlotId, players, priceMinor } of slots) {
+          const result = await collections.updateOne({ timeSlotId, available: true, giftCardCheckoutId: null }, { $set: {
+            available: false, payed: "Presentkort", updatedAt: new Date(), bookedAt: swedenTime,
+            bookedBy: name, number, email, bookingRef, cost: priceMinor / 100, originalCost: null,
+            discountCode: null, paymentId: null, players, giftCardReference
+          } }, { session });
+          if (!result.matchedCount) throw new GiftCardCheckoutError(409, "SLOT_UNAVAILABLE");
+        }
+        return collections.find({ bookingRef }, { session }).toArray();
+      }));
       
       console.log(`Booking confirmed with gift card. Ref: ${bookingRef}`);
 
@@ -5449,6 +5669,7 @@ router.post("/confirm-with-giftcard", async (req, res) => {
       res.status(200).json({ message: "Booking confirmed successfully" });
 
   } catch (error) {
+    if (error instanceof GiftCardCheckoutError) return respondGiftCardError(res, error);
     console.error("Error confirming with gift card:", error);
     res.status(500).json({ error: "Failed to confirm booking with gift card" });
   }
@@ -6478,14 +6699,19 @@ router.get("/giftcards/used-references", async (req, res) => {
   try {
     // Use aggregation ($group) instead of distinct — distinct is not part of
     // the MongoDB Stable API v1 (apiStrict) this client is configured with.
-    const grouped = await db
-      .collection("bookings")
-      .aggregate([
-        { $match: { giftCardReference: { $nin: [null, ""] } } },
-        { $group: { _id: "$giftCardReference" } }
-      ])
-      .toArray();
-    const references = grouped.map(g => g._id);
+    const [{ legacy = [], cards = [] } = {}] = await db.collection("bookings").aggregate([
+      { $match: { available: false, $or: [
+        { giftCardReference: { $type: "string", $ne: "" } }, { "giftCardAllocations.0": { $exists: true } }
+      ] } },
+      { $facet: {
+        legacy: [{ $match: { giftCardReference: { $type: "string", $ne: "" } } }, { $group: { _id: "$giftCardReference" } }],
+        cards: [{ $unwind: "$giftCardAllocations" }, { $group: { _id: "$giftCardAllocations.cardId" } }]
+      } }
+    ]).toArray();
+    const redeemedCards = await isBookingAdmin(req) ? await db.collection("giftcards").find(
+      { _id: { $in: cards.map(card => card._id) } }, { projection: { reference: 1 } }
+    ).toArray() : [];
+    const references = [...new Set([...legacy.map(card => card._id), ...redeemedCards.map(card => card.reference)])];
     res.json({ references });
   } catch (error) {
     console.error("Error fetching used gift card references:", error);
@@ -6504,9 +6730,13 @@ router.get("/giftcard/:reference/bookings", async (req, res) => {
       July: 7, August: 8, September: 9, October: 10, November: 11, December: 12
     };
 
+    const card = await isBookingAdmin(req)
+      ? await db.collection("giftcards").findOne({ reference }, { projection: { _id: 1 } }) : null;
     const bookings = await db
       .collection("bookings")
-      .find({ giftCardReference: reference })
+      .find({ available: false, $or: [
+        { giftCardReference: reference }, ...(card ? [{ "giftCardAllocations.cardId": card._id }] : [])
+      ] })
       .toArray();
 
     bookings.sort((a, b) => {
@@ -6604,13 +6834,22 @@ router.patch("/giftcard/edit/:reference", async (req, res) => {
 
     updateFields.updatedAt = new Date();
 
+    const filter = { reference };
+    if ("totalAmount" in updateFields || "payed" in updateFields) {
+      if ("totalAmount" in updateFields && (!Number.isFinite(Number(updateFields.totalAmount)) || Number(updateFields.totalAmount) < 0)) {
+        return res.status(400).json({ error: "Invalid gift card balance" });
+      }
+      filter.$or = [{ heldMinor: null }, { heldMinor: 0 }];
+    }
     const result = await collections.updateOne(
-      { reference: reference },
+      filter,
       { $set: updateFields }
     );
 
     if (result.matchedCount === 0) {
-      return res.status(404).json({ error: "Gift card not found" });
+      const exists = await collections.findOne({ reference }, { projection: { _id: 1 } });
+      return exists ? res.status(409).json({ error: "Presentkortet används i en pågående bokning" })
+        : res.status(404).json({ error: "Gift card not found" });
     }
 
     const updatedGiftCard = await collections.findOne({ reference: reference });
@@ -6835,6 +7074,20 @@ router.post("/checkBookingStatus", async (req, res) => {
 router.post("/confirmBookingFromSenaste", async (req, res) => {
   try {
     const { timeSlotId, bookingData, originalBookedAt, backupId } = req.body;
+    if (bookingData?.giftCardCheckoutId) {
+      if (!await isBookingAdmin(req)) return res.sendStatus(403);
+      if (typeof backupId !== "string" || !ObjectId.isValid(backupId) || typeof timeSlotId !== "string") {
+        return res.status(400).json({ code: "INVALID_CHECKOUT" });
+      }
+      try {
+        const result = await restoreGiftCardBooking(db, client, new ObjectId(backupId), timeSlotId);
+        await broadcast({ type: "timeUpdate", message: "Bokning återställd" });
+        return res.json({ message: "Booking restored", ...result });
+      } catch (error) {
+        return respondGiftCardError(res, error);
+      }
+    }
+
     const collections = db.collection("bookings");
 
     // First, check if the timeslot exists and get its current status
@@ -6866,7 +7119,7 @@ router.post("/confirmBookingFromSenaste", async (req, res) => {
     
     // Update the booking with confirmed status
     const result = await collections.updateOne(
-      { timeSlotId },
+      { timeSlotId, giftCardCheckoutId: null },
       {
         $set: {
           available: false,
