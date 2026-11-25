@@ -107,7 +107,6 @@ async function run() {
 let db = client.db("Mintescaperoom");
 
 //run().catch(console.dir);
-//mongodb+srv://alexanderneurasite:vrLUEvVaSHgWkabl@cluster0.0zreakw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
 
 // Ensure the indexes that back the hot public read paths exist on every boot.
 // createIndex is idempotent: it is a no-op if the index already exists, so this
@@ -120,6 +119,11 @@ async function ensureIndexes() {
     const bookings = db.collection("bookings");
     await bookings.createIndex({ year: 1, month: 1, day: 1 });
     await bookings.createIndex({ timeSlotId: 1 });
+    await bookings.createIndex({ "giftCardAllocations.cardId": 1 });
+    await bookings.createIndex({ giftCardCheckoutId: 1, giftCardSlotId: 1 });
+    await db.collection("giftCardCheckouts").createIndex({ bookingKey: 1 }, { unique: true });
+    await db.collection("giftCardCheckouts").createIndex({ paymentId: 1 });
+    await db.collection("giftCardCheckouts").createIndex({ state: 1, expiresAt: 1 });
     console.log("Ensured booking read-path indexes (year/month/day, timeSlotId)");
   } catch (err) {
     // Never let index maintenance crash the server; queries still work without it.
@@ -129,4 +133,5 @@ async function ensureIndexes() {
 
 ensureIndexes();
 
+export { client };
 export default db;

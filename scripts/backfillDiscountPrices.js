@@ -16,7 +16,7 @@ export function planDiscountBackfill(bookings, { code, percentage, since }) {
   for (const [paymentId, group] of groups) {
     const eligible = paymentId && group.every(b => b.available === false &&
       ['Swish', 'Nets Easy'].includes(b.payed) && b.discount === percentage &&
-      b.bookedAt >= since && b.originalCost == null && !b.discountCode && !b.giftCardReference &&
+      b.bookedAt >= since && b.originalCost == null && !b.discountCode && !b.giftCardReference && !b.giftCardCheckoutId && !b.giftCardAllocations?.length &&
       Number.isFinite(Number(b.cost)) && Number(b.cost) > 0);
     if (!eligible) {
       skipped.push({ paymentId, reason: 'Mixed, already stamped, or ineligible payment group' });
@@ -61,14 +61,14 @@ async function main() {
     });
     const filter = { available: false, payed: { $in: ['Swish', 'Nets Easy'] },
       discount: percentage, bookedAt: { $gte: since }, paymentId: { $ne: null },
-      originalCost: null, discountCode: null, giftCardReference: null };
+      originalCost: null, discountCode: null, giftCardReference: null, giftCardCheckoutId: null, "giftCardAllocations.0": { $exists: false } };
     if (selected.length) filter.paymentId = { $in: selected };
     const candidates = await bookings.find(filter, { projection: { paymentId: 1 } }).toArray();
     const ids = [...new Set(candidates.map(b => b.paymentId))];
     // Include the complete payment, so a partial candidate group cannot be repriced.
     const documents = ids.length ? await bookings.find({ paymentId: { $in: ids } }, { projection: {
       cost: 1, originalCost: 1, discountCode: 1, discount: 1, payed: 1, available: 1,
-      bookedAt: 1, paymentId: 1, giftCardReference: 1, bookingRef: 1, timeSlotId: 1,
+      bookedAt: 1, paymentId: 1, giftCardReference: 1, giftCardCheckoutId: 1, giftCardAllocations: 1, bookingRef: 1, timeSlotId: 1,
       year: 1, month: 1, day: 1, time: 1, category: 1
     } }).toArray() : [];
     const result = planDiscountBackfill(documents, { code, percentage, since });
@@ -85,7 +85,7 @@ async function main() {
           const operations = plan.bookings.map(booking => ({ updateOne: {
             filter: { _id: booking._id, paymentId: plan.paymentId, cost: booking.originalCost,
               available: false, payed: booking.payed, bookedAt: booking.bookedAt, discount: percentage,
-              originalCost: null, discountCode: null, giftCardReference: null },
+              originalCost: null, discountCode: null, giftCardReference: null, giftCardCheckoutId: null, "giftCardAllocations.0": { $exists: false } },
             update: { $set: { cost: booking.cost, originalCost: booking.originalCost, discountCode: code, updatedAt: new Date() } }
           } }));
           const result = await bookings.bulkWrite(operations, { session });
